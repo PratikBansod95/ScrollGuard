@@ -58,6 +58,7 @@ class OverlayService : Service() {
     private var timerAppView: TextView? = null
     private var timerRemainingView: TextView? = null
     private var timerProgressView: ProgressBar? = null
+    private var lastTimerSeconds: Int? = null
 
     private var warningView: FrameLayout? = null
     private var warningCardView: LinearLayout? = null
@@ -125,9 +126,9 @@ class OverlayService : Service() {
         ensureTimerView()
         stopCooldownTicker()
         timerAppView?.text = appName
-        timerRemainingView?.text = "${formatSeconds(remainingSeconds)} left"
+        updateTimerRemainingLabel(remainingSeconds)
         timerProgressView?.max = totalSeconds.coerceAtLeast(1)
-        timerProgressView?.progress = remainingSeconds.coerceAtLeast(0)
+        updateTimerProgress(remainingSeconds)
 
         animateOut(warningView)
         if (blockView?.visibility == View.VISIBLE) {
@@ -142,6 +143,36 @@ class OverlayService : Service() {
                 duration = 220L,
             )
         }
+    }
+
+    private fun updateTimerRemainingLabel(remainingSeconds: Int) {
+        val label = timerRemainingView ?: return
+        val nextText = "${formatSeconds(remainingSeconds)} left"
+        if (label.text == nextText) return
+
+        label.animate().cancel()
+        label.animate()
+            .alpha(0.7f)
+            .setDuration(90L)
+            .withEndAction {
+                label.text = nextText
+                label.animate()
+                    .alpha(1f)
+                    .setDuration(120L)
+                    .start()
+            }
+            .start()
+    }
+
+    private fun updateTimerProgress(remainingSeconds: Int) {
+        val progress = timerProgressView ?: return
+        val previous = lastTimerSeconds
+        lastTimerSeconds = remainingSeconds
+        if (previous == null || kotlin.math.abs(previous - remainingSeconds) > 1) {
+            progress.progress = remainingSeconds.coerceAtLeast(0)
+            return
+        }
+        progress.setProgress(remainingSeconds.coerceAtLeast(0), true)
     }
 
     private fun showWarning(title: String, message: String) {
@@ -500,6 +531,7 @@ class OverlayService : Service() {
         timerAppView = null
         timerRemainingView = null
         timerProgressView = null
+        lastTimerSeconds = null
         warningView = null
         warningCardView = null
         warningTitleView = null

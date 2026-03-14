@@ -671,6 +671,18 @@ fun AppSelectionScreen(
                                 shape = RoundedCornerShape(18.dp),
                             )
                         }
+                        PresetSection(
+                            title = "Quick session presets",
+                            values = listOf(45, 60, 120),
+                            formatter = { "${it}s" },
+                            onSelect = { timeInputs[app.packageName] = it.toString() },
+                        )
+                        PresetSection(
+                            title = "Quick cooldown presets",
+                            values = listOf(300, 600, 900),
+                            formatter = { formatPresetDuration(it) },
+                            onSelect = { cooldownInputs[app.packageName] = it.toString() },
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Button(
                                 onClick = {
@@ -834,3 +846,34 @@ private fun DashboardWideCard(title: String, value: String, subtitle: String, ic
 
 
 
+
+
+
+@Composable
+private fun PresetSection(
+    title: String,
+    values: List<Int>,
+    formatter: (Int) -> String,
+    onSelect: (Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            values.forEach { value ->
+                FilterChip(
+                    selected = false,
+                    onClick = { onSelect(value) },
+                    label = { Text(formatter(value)) },
+                )
+            }
+        }
+    }
+}
+
+private fun formatPresetDuration(seconds: Int): String {
+    return if (seconds % 60 == 0) {
+        "${seconds / 60}m"
+    } else {
+        "${seconds}s"
+    }
+}

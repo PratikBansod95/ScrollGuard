@@ -13,7 +13,7 @@ class ScrollAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) return
         val packageName = event.packageName?.toString() ?: return
-        if (scrollDetector.recordScroll()) {
+        if (scrollDetector.recordScroll(event)) {
             val sessionManager = (application as ScrollGuardApp).container.sessionManager
             sessionManager.handleScrollThreshold(packageName)
             scrollDetector.reset()

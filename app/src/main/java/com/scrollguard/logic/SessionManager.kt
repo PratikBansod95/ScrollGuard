@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentHashMap
 
-
 data class SessionState(
     val packageName: String,
     val appName: String,
@@ -42,6 +41,7 @@ class SessionManager(
     private val cooldowns = ConcurrentHashMap<String, Long>()
     private var activePackageName: String? = null
     private var sessionStartMillis = 0L
+    private var lastWarningAt = 0L
 
     suspend fun onForegroundAppChanged(packageName: String?) {
         if (packageName.isNullOrBlank()) return
@@ -70,6 +70,7 @@ class SessionManager(
         if (activePackageName != packageName) {
             activePackageName = packageName
             sessionStartMillis = System.currentTimeMillis()
+            lastWarningAt = 0L
         }
 
         val elapsedSeconds = ((System.currentTimeMillis() - sessionStartMillis) / 1000L).toInt()
@@ -82,7 +83,7 @@ class SessionManager(
             return
         }
 
-        val state = SessionState(
+        _activeSession.value = SessionState(
             packageName = limit.packageName,
             appName = limit.appName,
             totalSeconds = limit.timeLimitSeconds,
@@ -90,7 +91,6 @@ class SessionManager(
             isBlocked = false,
             cooldownRemainingSeconds = 0,
         )
-        _activeSession.value = state
         dispatchOverlay(
             OverlayCommand.ShowTimer(
                 appName = limit.appName,
@@ -101,21 +101,32 @@ class SessionManager(
     }
 
     fun handleScrollThreshold(packageName: String?) {
-        if (packageName == null || packageName != activePackageName) return
+        val session = _activeSession.value ?: return
+        if (packageName == null || packageName != activePackageName || session.isBlocked) return
+
+        val now = System.currentTimeMillis()
+        val sessionAge = now - sessionStartMillis
+        if (sessionAge < MIN_SESSION_AGE_FOR_WARNING_MS) {
+            return
+        }
+        if (now - lastWarningAt < WARNING_COOLDOWN_MS) {
+            return
+        }
+
+        lastWarningAt = now
         incrementDoomScrollDetections()
         dispatchOverlay(
             OverlayCommand.ShowWarning(
-                title = "Doom scrolling detected",
-                message = "Take a break. You can step away or close the app now.",
+                title = "Slow down a bit",
+                message = "You have been scrolling quickly for a while. Want 10 more seconds or a clean exit?",
             ),
         )
     }
 
     fun extendCurrentSession(extraSeconds: Int) {
         val session = _activeSession.value ?: return
-        sessionStartMillis -= extraSeconds * 1_000L
+        sessionStartMillis += extraSeconds * 1_000L
         _activeSession.value = session.copy(
-            totalSeconds = session.totalSeconds + extraSeconds,
             remainingSeconds = session.remainingSeconds + extraSeconds,
         )
     }
@@ -123,6 +134,7 @@ class SessionManager(
     fun clearSession() {
         activePackageName = null
         sessionStartMillis = 0L
+        lastWarningAt = 0L
         _activeSession.value = null
         dispatchOverlay(OverlayCommand.HideAll)
     }
@@ -196,5 +208,7 @@ class SessionManager(
         private const val KEY_BLOCKED_SESSIONS = "blocked_sessions_today"
         private const val KEY_DOOM_DETECTIONS = "doom_scroll_detections"
         private const val KEY_MOST_USED_APP = "most_used_app"
+        private const val MIN_SESSION_AGE_FOR_WARNING_MS = 8_000L
+        private const val WARNING_COOLDOWN_MS = 30_000L
     }
 }

@@ -25,6 +25,7 @@ class AppMonitorService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var usageStatsManager: UsageStatsManager
     private var monitorJob: Job? = null
+    private var lastForegroundPackage: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -58,14 +59,17 @@ class AppMonitorService : Service() {
         val begin = end - 5_000L
         val events = usageStatsManager.queryEvents(begin, end)
         val event = UsageEvents.Event()
-        var packageName: String? = null
+        var resumedPackage: String? = null
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
             if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                packageName = event.packageName
+                resumedPackage = event.packageName
             }
         }
-        return packageName
+        if (!resumedPackage.isNullOrBlank()) {
+            lastForegroundPackage = resumedPackage
+        }
+        return lastForegroundPackage
     }
 
     private fun ensureChannel() {

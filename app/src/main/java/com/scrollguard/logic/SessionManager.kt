@@ -42,6 +42,7 @@ class SessionManager(
     private var activePackageName: String? = null
     private var sessionStartMillis = 0L
     private var lastWarningAt = 0L
+    private var warningsThisSession = 0
 
     suspend fun onForegroundAppChanged(packageName: String?) {
         if (packageName.isNullOrBlank()) return
@@ -71,6 +72,7 @@ class SessionManager(
             activePackageName = packageName
             sessionStartMillis = System.currentTimeMillis()
             lastWarningAt = 0L
+            warningsThisSession = 0
         }
 
         val elapsedSeconds = ((System.currentTimeMillis() - sessionStartMillis) / 1000L).toInt()
@@ -100,7 +102,12 @@ class SessionManager(
         )
     }
 
-    fun handleScrollThreshold(packageName: String?) {
+    fun handleScrollThreshold(
+        packageName: String?,
+        scrollCount: Int,
+        averageIntervalMillis: Long,
+        sustainedWindowMillis: Long,
+    ) {
         val session = _activeSession.value ?: return
         if (packageName == null || packageName != activePackageName || session.isBlocked) return
 
@@ -113,12 +120,26 @@ class SessionManager(
             return
         }
 
+        warningsThisSession += 1
         lastWarningAt = now
         incrementDoomScrollDetections()
+
+        val title = if (warningsThisSession == 1) {
+            "You slipped into a scroll loop"
+        } else {
+            "The feed still has your attention"
+        }
+        val sustainedSeconds = (sustainedWindowMillis / 1_000L).coerceAtLeast(1L)
+        val message = if (warningsThisSession == 1) {
+            "You kept moving through the feed for about ${sustainedSeconds}s with $scrollCount strong scrolls. Want 10 more seconds or a clean exit?"
+        } else {
+            "Another sustained scrolling burst showed up in this session. You are moving at about ${averageIntervalMillis}ms per scroll, so this is a good stop point."
+        }
+
         dispatchOverlay(
             OverlayCommand.ShowWarning(
-                title = "Slow down a bit",
-                message = "You have been scrolling quickly for a while. Want 10 more seconds or a clean exit?",
+                title = title,
+                message = message,
             ),
         )
     }
@@ -135,6 +156,7 @@ class SessionManager(
         activePackageName = null
         sessionStartMillis = 0L
         lastWarningAt = 0L
+        warningsThisSession = 0
         _activeSession.value = null
         dispatchOverlay(OverlayCommand.HideAll)
     }
@@ -208,7 +230,7 @@ class SessionManager(
         private const val KEY_BLOCKED_SESSIONS = "blocked_sessions_today"
         private const val KEY_DOOM_DETECTIONS = "doom_scroll_detections"
         private const val KEY_MOST_USED_APP = "most_used_app"
-        private const val MIN_SESSION_AGE_FOR_WARNING_MS = 8_000L
-        private const val WARNING_COOLDOWN_MS = 30_000L
+        private const val MIN_SESSION_AGE_FOR_WARNING_MS = 10_000L
+        private const val WARNING_COOLDOWN_MS = 25_000L
     }
 }

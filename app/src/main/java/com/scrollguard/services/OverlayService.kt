@@ -13,7 +13,9 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -50,6 +52,7 @@ sealed class OverlayCommand {
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var timerView: FrameLayout? = null
     private var timerAppView: TextView? = null
@@ -66,6 +69,23 @@ class OverlayService : Service() {
     private var blockBadgeView: TextView? = null
     private var blockTitleView: TextView? = null
     private var blockMessageView: TextView? = null
+    private var activeBlockedAppName: String? = null
+    private var cooldownEndTimeMillis = 0L
+
+    private val cooldownTicker = object : Runnable {
+        override fun run() {
+            if (blockView?.visibility != View.VISIBLE || cooldownEndTimeMillis <= 0L) {
+                return
+            }
+            val remainingSeconds = ((cooldownEndTimeMillis - System.currentTimeMillis()) / 1000L)
+                .toInt()
+                .coerceAtLeast(0)
+            updateBlockCountdown(remainingSeconds)
+            if (remainingSeconds > 0) {
+                mainHandler.postDelayed(this, 1_000L)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -103,6 +123,7 @@ class OverlayService : Service() {
 
     private fun showTimer(appName: String, totalSeconds: Int, remainingSeconds: Int) {
         ensureTimerView()
+        stopCooldownTicker()
         timerAppView?.text = appName
         timerRemainingView?.text = "${formatSeconds(remainingSeconds)} left"
         timerProgressView?.max = totalSeconds.coerceAtLeast(1)
@@ -148,9 +169,9 @@ class OverlayService : Service() {
 
     private fun showBlock(appName: String, cooldownSeconds: Int) {
         ensureBlockView()
-        blockBadgeView?.text = "Cooldown active"
-        blockTitleView?.text = "Put the phone down for a minute"
-        blockMessageView?.text = "$appName is locked for ${formatSeconds(cooldownSeconds)} so this session can reset."
+        activeBlockedAppName = appName
+        cooldownEndTimeMillis = System.currentTimeMillis() + cooldownSeconds.coerceAtLeast(0) * 1_000L
+        updateBlockCountdown(cooldownSeconds)
         animateOut(timerView)
         animateOut(warningView)
         animateIn(
@@ -169,6 +190,23 @@ class OverlayService : Service() {
             toScale = 1f,
             duration = 260L,
         )
+        startCooldownTicker()
+    }
+
+    private fun updateBlockCountdown(cooldownSeconds: Int) {
+        blockBadgeView?.text = "Cooldown active"
+        blockTitleView?.text = "Put the phone down for a minute"
+        val appName = activeBlockedAppName.orEmpty()
+        blockMessageView?.text = "$appName is locked for ${formatSeconds(cooldownSeconds)} so this session can reset."
+    }
+
+    private fun startCooldownTicker() {
+        mainHandler.removeCallbacks(cooldownTicker)
+        mainHandler.post(cooldownTicker)
+    }
+
+    private fun stopCooldownTicker() {
+        mainHandler.removeCallbacks(cooldownTicker)
     }
 
     private fun ensureTimerView() {
@@ -454,6 +492,7 @@ class OverlayService : Service() {
     }
 
     private fun hideAll() {
+        stopCooldownTicker()
         removeView(timerView)
         removeView(warningView)
         removeView(blockView)
@@ -470,6 +509,8 @@ class OverlayService : Service() {
         blockBadgeView = null
         blockTitleView = null
         blockMessageView = null
+        activeBlockedAppName = null
+        cooldownEndTimeMillis = 0L
     }
 
     private fun removeView(view: View?) {

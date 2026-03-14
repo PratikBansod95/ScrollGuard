@@ -7,6 +7,7 @@ import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,17 +20,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SettingsApplications
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,10 +58,14 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -70,6 +81,15 @@ import com.scrollguard.ScrollGuardApp
 import com.scrollguard.data.AppLimitEntity
 import com.scrollguard.logic.DashboardStats
 import com.scrollguard.services.AppMonitorService
+import com.scrollguard.ui.theme.Amber
+import com.scrollguard.ui.theme.Coral
+import com.scrollguard.ui.theme.Cream
+import com.scrollguard.ui.theme.DeepSea
+import com.scrollguard.ui.theme.Ink
+import com.scrollguard.ui.theme.Mist
+import com.scrollguard.ui.theme.Moss
+import com.scrollguard.ui.theme.Reef
+import com.scrollguard.ui.theme.Sand
 import com.scrollguard.ui.theme.ScrollGuardTheme
 import com.scrollguard.utils.AppUtils
 import com.scrollguard.utils.InstalledApp
@@ -163,7 +183,7 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
 private data class BottomDestination(
     val route: String,
     val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val icon: ImageVector,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -175,16 +195,39 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route ?: "home"
     val destinations = listOf(
-        BottomDestination("home", "Home", Icons.Rounded.Security),
+        BottomDestination("home", "Home", Icons.Rounded.Shield),
         BottomDestination("limits", "Limits", Icons.Rounded.SettingsApplications),
         BottomDestination("stats", "Stats", Icons.Rounded.BarChart),
     )
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("ScrollGuard") }) },
-        containerColor = Color(0xFFF8F4EC),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Brush.linearGradient(listOf(DeepSea, Reef, Amber))),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Rounded.Security, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        }
+                        Column {
+                            Text("ScrollGuard", style = MaterialTheme.typography.titleLarge)
+                            Text("Calmer limits for endless feeds", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                },
+            )
+        },
+        containerColor = Sand,
         bottomBar = {
-            NavigationBar(modifier = Modifier.navigationBarsPadding()) {
+            NavigationBar(
+                modifier = Modifier.navigationBarsPadding(),
+                containerColor = Cream,
+            ) {
                 destinations.forEach { destination ->
                     NavigationBarItem(
                         selected = currentRoute == destination.route,
@@ -258,6 +301,9 @@ private fun HomeScreen(
             )
         }
         item {
+            QuickStatsStrip(stats = stats, monitoredCount = monitoredCount)
+        }
+        item {
             SetupChecklistCard(
                 hasUsageAccess = hasUsageAccess,
                 hasOverlay = hasOverlay,
@@ -266,9 +312,6 @@ private fun HomeScreen(
                 onOpenOverlayAccess = onOpenOverlayAccess,
                 onOpenAccessibility = onOpenAccessibility,
             )
-        }
-        item {
-            TodayOverviewCard(stats = stats, monitoredCount = monitoredCount)
         }
         item {
             HowItWorksCard()
@@ -284,46 +327,104 @@ private fun FocusHeroCard(
     onStartMonitoring: () -> Unit,
 ) {
     Card(
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.linearGradient(
-                        listOf(Color(0xFF17313A), Color(0xFF285363), Color(0xFFD8A04D)),
-                    ),
-                )
+                .background(Brush.linearGradient(listOf(DeepSea, Reef, Amber)))
                 .padding(24.dp),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                drawCircle(color = Color.White.copy(alpha = 0.06f), radius = size.minDimension * 0.34f, center = Offset(size.width * 0.9f, size.height * 0.15f))
+                drawCircle(color = Color.White.copy(alpha = 0.04f), radius = size.minDimension * 0.28f, center = Offset(size.width * 0.08f, size.height * 0.85f))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(color = Color.White.copy(alpha = 0.14f), shape = RoundedCornerShape(999.dp)) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Rounded.Timer, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Text("Focus protection", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
                 Text(
-                    if (allReady) "You are ready to guard your focus" else "Finish setup, then start monitoring",
-                    style = MaterialTheme.typography.headlineMedium,
+                    if (allReady) "Everything is ready. Start a calmer phone session." else "Set up ScrollGuard in three quick steps.",
+                    style = MaterialTheme.typography.headlineLarge,
                     color = Color.White,
-                    fontWeight = FontWeight.Bold,
                 )
                 Text(
                     if (allReady) {
-                        "ScrollGuard can now show the timer bar, detect rapid scrolling, and block the app when time runs out."
+                        "Your chosen apps will get a live timer, doom-scroll warning, and cooldown wall when the session ends."
                     } else {
-                        "There are only three permissions to enable. Once they are on, the app can watch selected apps and step in when a session goes too far."
+                        "Enable permissions once, choose the apps to watch, and ScrollGuard will take care of the rest in the background."
                     },
-                    color = Color(0xFFF4ECDD),
+                    color = Color(0xFFF7EFE0),
+                    style = MaterialTheme.typography.bodyLarge,
                 )
                 LinearProgressIndicator(
                     progress = { completedSteps / 3f },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(999.dp)),
+                    color = Color.White,
+                    trackColor = Color.White.copy(alpha = 0.25f),
                 )
-                Text("Setup progress: $completedSteps of 3 complete", color = Color.White)
-                Text("Apps protected: $monitoredCount", color = Color.White)
-                Button(onClick = onStartMonitoring, enabled = allReady && monitoredCount > 0) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HeroInfoPill("Setup", "$completedSteps / 3")
+                    HeroInfoPill("Protected apps", monitoredCount.toString())
+                }
+                Button(
+                    onClick = onStartMonitoring,
+                    enabled = allReady && monitoredCount > 0,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = DeepSea,
+                        disabledContainerColor = Color.White.copy(alpha = 0.45f),
+                        disabledContentColor = DeepSea.copy(alpha = 0.6f),
+                    ),
+                ) {
                     Icon(Icons.Rounded.PlayArrow, contentDescription = null)
-                    Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                    Text(if (monitoredCount > 0) "Start protection" else "Add apps in Limits first")
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text(if (monitoredCount > 0) "Start protection" else "Add apps in Limits")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun HeroInfoPill(label: String, value: String) {
+    Surface(color = Color.White.copy(alpha = 0.14f), shape = RoundedCornerShape(18.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text(label, color = Color(0xFFEEDFC6), style = MaterialTheme.typography.bodyMedium)
+            Text(value, color = Color.White, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun QuickStatsStrip(stats: DashboardStats, monitoredCount: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        QuickStatCard("Apps", monitoredCount.toString(), Icons.Rounded.SettingsApplications, Reef, Modifier.weight(1f))
+        QuickStatCard("Warnings", stats.doomScrollDetections.toString(), Icons.Rounded.Warning, Coral, Modifier.weight(1f))
+        QuickStatCard("Blocked", stats.blockedSessionsToday.toString(), Icons.Rounded.AccessTime, Moss, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun QuickStatCard(title: String, value: String, icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
+    Card(modifier = modifier, shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(color = tint.copy(alpha = 0.14f), shape = CircleShape) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.padding(10.dp))
+            }
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = Ink)
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -337,109 +438,79 @@ private fun SetupChecklistCard(
     onOpenOverlayAccess: () -> Unit,
     onOpenAccessibility: () -> Unit,
 ) {
-    Card(shape = RoundedCornerShape(24.dp)) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
+    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Setup checklist", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("Enable each permission once. After that, ScrollGuard can work in the background without extra steps.")
-            PermissionStepRow(
-                title = "Usage access",
-                subtitle = "Detect which app is on screen.",
-                granted = hasUsageAccess,
-                onClick = onOpenUsageAccess,
-            )
-            PermissionStepRow(
-                title = "Overlay permission",
-                subtitle = "Show the live timer and blocking screen.",
-                granted = hasOverlay,
-                onClick = onOpenOverlayAccess,
-            )
-            PermissionStepRow(
-                title = "Accessibility service",
-                subtitle = "Track repeated scrolling inside monitored apps.",
-                granted = hasAccessibility,
-                onClick = onOpenAccessibility,
-            )
+            Text("Turn on these permissions once so ScrollGuard can watch the foreground app, show overlays, and detect repeated scrolling.")
+            PermissionStepRow("Usage access", "Detect which app is currently on screen.", hasUsageAccess, onOpenUsageAccess)
+            PermissionStepRow("Overlay permission", "Show the timer bar, warning modal, and cooldown wall.", hasOverlay, onOpenOverlayAccess)
+            PermissionStepRow("Accessibility service", "Watch heavy scrolling patterns inside feeds.", hasAccessibility, onOpenAccessibility)
         }
     }
 }
 
 @Composable
-private fun PermissionStepRow(
-    title: String,
-    subtitle: String,
-    granted: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
+private fun PermissionStepRow(title: String, subtitle: String, granted: Boolean, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = if (granted) Color(0xFFF0F8F2) else Color(0xFFFFF5E8),
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(
-            imageVector = if (granted) Icons.Rounded.CheckCircle else Icons.Rounded.Warning,
-            contentDescription = null,
-            tint = if (granted) Color(0xFF1A7F37) else Color(0xFFB54708),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        OutlinedButton(onClick = onClick) {
-            Text(if (granted) "Review" else "Enable")
-        }
-    }
-}
-
-@Composable
-private fun TodayOverviewCard(stats: DashboardStats, monitoredCount: Int) {
-    Card(shape = RoundedCornerShape(24.dp)) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Today at a glance", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            OverviewRow("Monitored apps", monitoredCount.toString())
-            OverviewRow("Blocked sessions", stats.blockedSessionsToday.toString())
-            OverviewRow("Doom-scroll warnings", stats.doomScrollDetections.toString())
-            OverviewRow("Most recent blocked app", stats.mostUsedApp)
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(if (granted) Moss.copy(alpha = 0.16f) else Amber.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (granted) Icons.Rounded.CheckCircle else Icons.Rounded.Warning,
+                    contentDescription = null,
+                    tint = if (granted) Moss else Coral,
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            }
+            OutlinedButton(onClick = onClick, shape = RoundedCornerShape(16.dp)) {
+                Text(if (granted) "Review" else "Enable")
+            }
         }
-    }
-}
-
-@Composable
-private fun OverviewRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontWeight = FontWeight.SemiBold)
     }
 }
 
 @Composable
 private fun HowItWorksCard() {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF2DA)),
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("How protection works", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("1. Choose the apps you want to limit in the Limits tab.")
-            Text("2. Set a session length and cooldown for each app.")
-            Text("3. Start protection once the three permissions are enabled.")
-            Text("4. ScrollGuard shows a timer bar, warns on heavy scrolling, and blocks the app when the session ends.")
+    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF2DA))) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("How a protected session works", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            TimelineRow("Pick the apps you tend to lose time in.")
+            TimelineRow("Set a short session and a cooldown in the Limits tab.")
+            TimelineRow("Start protection once the setup checklist is complete.")
+            TimelineRow("ScrollGuard warns you when scrolling gets intense and blocks the app when time is up.")
         }
     }
 }
 
+@Composable
+private fun TimelineRow(text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+        Box(
+            modifier = Modifier
+                .padding(top = 4.dp)
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(Amber),
+        )
+        Text(text, style = MaterialTheme.typography.bodyLarge)
+    }
+}
 @Composable
 fun AppSelectionScreen(
     installedApps: List<InstalledApp>,
@@ -456,13 +527,10 @@ fun AppSelectionScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F5F6))) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF5F6))) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Choose the apps to limit", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    Text("Set a short session timer and a cooldown. Example: 60 seconds of use, then 5 minutes away.")
+                    Text("Keep sessions short and cooldowns meaningful. A good starting point is 60 seconds in-app and 5 minutes away.")
                 }
             }
         }
@@ -475,23 +543,19 @@ fun AppSelectionScreen(
                 cooldownInputs[app.packageName] = existing?.cooldownSeconds?.toString() ?: "300"
             }
 
-            Card(shape = RoundedCornerShape(24.dp)) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
+            Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         AppIcon(app = app)
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(app.appName, fontWeight = FontWeight.SemiBold)
+                            Text(app.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                             Text(
                                 if (existing == null) "Not monitored yet" else "Currently limited",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium,
                             )
                         }
+                        StatusPill(active = existing != null)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(
@@ -500,6 +564,7 @@ fun AppSelectionScreen(
                             modifier = Modifier.weight(1f),
                             label = { Text("Session sec") },
                             singleLine = true,
+                            shape = RoundedCornerShape(18.dp),
                         )
                         OutlinedTextField(
                             value = cooldownInputs[app.packageName].orEmpty(),
@@ -507,6 +572,7 @@ fun AppSelectionScreen(
                             modifier = Modifier.weight(1f),
                             label = { Text("Cooldown sec") },
                             singleLine = true,
+                            shape = RoundedCornerShape(18.dp),
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -518,11 +584,12 @@ fun AppSelectionScreen(
                                     cooldownInputs[app.packageName]?.toIntOrNull() ?: 300,
                                 )
                             },
+                            shape = RoundedCornerShape(18.dp),
                         ) {
                             Text(if (existing == null) "Save limit" else "Update limit")
                         }
                         if (existing != null) {
-                            OutlinedButton(onClick = { onRemoveLimit(app.packageName) }) {
+                            OutlinedButton(onClick = { onRemoveLimit(app.packageName) }, shape = RoundedCornerShape(18.dp)) {
                                 Text("Remove")
                             }
                         }
@@ -534,8 +601,20 @@ fun AppSelectionScreen(
 }
 
 @Composable
+private fun StatusPill(active: Boolean) {
+    Surface(shape = RoundedCornerShape(999.dp), color = if (active) Moss.copy(alpha = 0.14f) else Mist) {
+        Text(
+            if (active) "Active" else "Idle",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            color = if (active) Moss else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelLarge,
+        )
+    }
+}
+
+@Composable
 private fun AppIcon(app: InstalledApp) {
-    Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFECE7DF)) {
+    Surface(shape = RoundedCornerShape(20.dp), color = Mist) {
         AndroidView(
             modifier = Modifier.height(56.dp),
             factory = { context ->
@@ -551,28 +630,88 @@ private fun AppIcon(app: InstalledApp) {
 
 @Composable
 fun DashboardScreen(stats: DashboardStats, monitoredCount: Int) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        StatCard(title = "Blocked sessions today", value = stats.blockedSessionsToday.toString())
-        StatCard(title = "Doom scroll detections", value = stats.doomScrollDetections.toString())
-        StatCard(title = "Most recent blocked app", value = stats.mostUsedApp)
-        StatCard(title = "Monitored apps", value = monitoredCount.toString())
+        item {
+            Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Brush.linearGradient(listOf(Reef, DeepSea)))
+                        .padding(22.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Your progress today", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+                        Text("A quick pulse on how often ScrollGuard had to step in.", color = Color(0xFFE8EEF1))
+                    }
+                }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                DashboardHighlightCard("Blocked sessions", stats.blockedSessionsToday.toString(), Icons.Rounded.AccessTime, Amber, Modifier.weight(1f))
+                DashboardHighlightCard("Warnings", stats.doomScrollDetections.toString(), Icons.Rounded.Warning, Coral, Modifier.weight(1f))
+            }
+        }
+        item {
+            DashboardWideCard(
+                title = "Most recent blocked app",
+                value = stats.mostUsedApp,
+                subtitle = "The app that most recently hit its session limit.",
+                icon = Icons.Rounded.SettingsApplications,
+                tint = Reef,
+            )
+        }
+        item {
+            DashboardWideCard(
+                title = "Monitored apps",
+                value = monitoredCount.toString(),
+                subtitle = "Apps currently covered by ScrollGuard limits.",
+                icon = Icons.Rounded.Shield,
+                tint = Moss,
+            )
+        }
     }
 }
 
 @Composable
-private fun StatCard(title: String, value: String) {
-    Card(shape = RoundedCornerShape(24.dp)) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+private fun DashboardHighlightCard(title: String, value: String, icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
+    Card(modifier = modifier, shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(color = tint.copy(alpha = 0.14f), shape = CircleShape) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.padding(10.dp))
+            }
+            Text(value, style = MaterialTheme.typography.headlineMedium)
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun DashboardWideCard(title: String, value: String, subtitle: String, icon: ImageVector, tint: Color) {
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(tint.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = tint)
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(value, style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

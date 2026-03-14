@@ -6,9 +6,13 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -44,8 +48,9 @@ sealed class OverlayCommand {
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
 
-    private var timerView: LinearLayout? = null
-    private var timerTitleView: TextView? = null
+    private var timerView: FrameLayout? = null
+    private var timerAppView: TextView? = null
+    private var timerRemainingView: TextView? = null
     private var timerProgressView: ProgressBar? = null
 
     private var warningView: FrameLayout? = null
@@ -53,6 +58,7 @@ class OverlayService : Service() {
     private var warningMessageView: TextView? = null
 
     private var blockView: FrameLayout? = null
+    private var blockBadgeView: TextView? = null
     private var blockTitleView: TextView? = null
     private var blockMessageView: TextView? = null
 
@@ -92,7 +98,8 @@ class OverlayService : Service() {
 
     private fun showTimer(appName: String, totalSeconds: Int, remainingSeconds: Int) {
         ensureTimerView()
-        timerTitleView?.text = "$appName  ${formatSeconds(remainingSeconds)} left"
+        timerAppView?.text = appName
+        timerRemainingView?.text = "${formatSeconds(remainingSeconds)} left"
         timerProgressView?.max = totalSeconds.coerceAtLeast(1)
         timerProgressView?.progress = remainingSeconds.coerceAtLeast(0)
         timerView?.visibility = View.VISIBLE
@@ -112,8 +119,9 @@ class OverlayService : Service() {
 
     private fun showBlock(appName: String, cooldownSeconds: Int) {
         ensureBlockView()
-        blockTitleView?.text = "Time's up. Take a break."
-        blockMessageView?.text = "$appName is blocked for ${formatSeconds(cooldownSeconds)}"
+        blockBadgeView?.text = "Cooldown active"
+        blockTitleView?.text = "Put the phone down for a minute"
+        blockMessageView?.text = "$appName is locked for ${formatSeconds(cooldownSeconds)} so this session can reset."
         blockView?.visibility = View.VISIBLE
         timerView?.visibility = View.GONE
         warningView?.visibility = View.GONE
@@ -122,79 +130,134 @@ class OverlayService : Service() {
     private fun ensureTimerView() {
         if (timerView != null) return
 
-        val container = LinearLayout(this).apply {
+        val root = FrameLayout(this).apply {
+            visibility = View.GONE
+            setPadding(dp(12), dp(12), dp(12), 0)
+        }
+        val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xDD203A43.toInt())
-            setPadding(32, 24, 32, 24)
+            background = roundedDrawable(
+                color = Color.parseColor("#E217313A"),
+                radiusDp = 22,
+                strokeColor = Color.parseColor("#33FFFFFF"),
+                strokeDp = 1,
+            )
+            elevation = dp(8).toFloat()
+            setPadding(dp(18), dp(14), dp(18), dp(16))
         }
-        val title = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 16f
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
-        container.addView(title)
-        container.addView(progress)
+        val appLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val remainingLabel = TextView(this).apply {
+            setTextColor(Color.parseColor("#FFE7B76A"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            background = roundedDrawable(Color.parseColor("#1FFFFFFF"), 999)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+        }
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            progressDrawable.setTint(Color.parseColor("#FFE7B76A"))
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#33FFFFFF"))
+        }
 
-        timerView = container
-        timerTitleView = title
+        topRow.addView(appLabel)
+        topRow.addView(remainingLabel)
+        card.addView(topRow)
+        card.addView(space(dp(10)))
+        card.addView(progress, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(8),
+        ))
+        root.addView(card)
+
+        timerView = root
+        timerAppView = appLabel
+        timerRemainingView = remainingLabel
         timerProgressView = progress
-        addView(container, topParams())
+        addView(root, topParams())
     }
 
     private fun ensureWarningView() {
         if (warningView != null) return
 
         val root = FrameLayout(this).apply {
-            setBackgroundColor(0x66B54708.toInt())
+            setBackgroundColor(Color.parseColor("#80311D09"))
             visibility = View.GONE
+            setPadding(dp(20), dp(20), dp(20), dp(20))
         }
-        val content = LinearLayout(this).apply {
+        val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFFFFFFF.toInt())
-            setPadding(48, 48, 48, 48)
+            background = roundedDrawable(Color.parseColor("#FFF9F4EA"), 28)
+            setPadding(dp(24), dp(24), dp(24), dp(20))
+            elevation = dp(10).toFloat()
+        }
+        val eyebrow = TextView(this).apply {
+            text = "SCROLL CHECK"
+            setTextColor(Color.parseColor("#B54708"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTypeface(typeface, Typeface.BOLD)
+            letterSpacing = 0.08f
         }
         val title = TextView(this).apply {
-            textSize = 20f
+            setTextColor(Color.parseColor("#172B35"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setTypeface(typeface, Typeface.BOLD)
         }
         val message = TextView(this).apply {
-            textSize = 16f
-            setPadding(0, 16, 0, 24)
+            setTextColor(Color.parseColor("#5E6A70"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setLineSpacing(0f, 1.15f)
         }
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
         }
-        buttonRow.addView(Button(this).apply {
-            text = "Continue 10s"
-            setOnClickListener {
-                val sessionManager = (application as ScrollGuardApp).container.sessionManager
-                sessionManager.extendCurrentSession(10)
-                warningView?.visibility = View.GONE
-            }
-        })
-        buttonRow.addView(Button(this).apply {
-            text = "Close app"
-            setOnClickListener {
-                startActivity(
-                    Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_HOME)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    },
-                )
-                warningView?.visibility = View.GONE
-            }
-        })
-        content.addView(title)
-        content.addView(message)
-        content.addView(buttonRow)
-        root.addView(
-            content,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER,
-            ),
-        )
+        val continueButton = actionButton(
+            text = "Continue 10s",
+            backgroundColor = Color.parseColor("#17313A"),
+            textColor = Color.WHITE,
+        ) {
+            val sessionManager = (application as ScrollGuardApp).container.sessionManager
+            sessionManager.extendCurrentSession(10)
+            warningView?.visibility = View.GONE
+        }
+        val closeButton = actionButton(
+            text = "Close app",
+            backgroundColor = Color.parseColor("#E7DED1"),
+            textColor = Color.parseColor("#172B35"),
+        ) {
+            startActivity(
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+            warningView?.visibility = View.GONE
+        }
+
+        buttonRow.addView(closeButton)
+        buttonRow.addView(space(dp(10), horizontal = true))
+        buttonRow.addView(continueButton)
+
+        card.addView(eyebrow)
+        card.addView(space(dp(10)))
+        card.addView(title)
+        card.addView(space(dp(12)))
+        card.addView(message)
+        card.addView(space(dp(22)))
+        card.addView(buttonRow)
+        root.addView(card, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER,
+        ))
 
         warningView = root
         warningTitleView = title
@@ -206,36 +269,80 @@ class OverlayService : Service() {
         if (blockView != null) return
 
         val root = FrameLayout(this).apply {
-            setBackgroundColor(0xEE101828.toInt())
+            setBackgroundColor(Color.parseColor("#E6111B22"))
             visibility = View.GONE
+            setPadding(dp(24), dp(24), dp(24), dp(24))
         }
-        val content = LinearLayout(this).apply {
+        val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = roundedDrawable(Color.parseColor("#FF132731"), 32)
+            setPadding(dp(28), dp(28), dp(28), dp(28))
+            elevation = dp(12).toFloat()
+        }
+        val badge = TextView(this).apply {
+            setTextColor(Color.parseColor("#FFE7B76A"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            background = roundedDrawable(Color.parseColor("#1FFFFFFF"), 999)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
         }
         val title = TextView(this).apply {
-            textSize = 26f
-            setTextColor(0xFFFFFFFF.toInt())
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
         }
         val message = TextView(this).apply {
-            textSize = 18f
-            setTextColor(0xFFE5E7EB.toInt())
+            setTextColor(Color.parseColor("#D7E0E4"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            gravity = Gravity.CENTER
+            setLineSpacing(0f, 1.15f)
         }
-        content.addView(title)
-        content.addView(message)
-        root.addView(
-            content,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER,
-            ),
-        )
+        val hint = TextView(this).apply {
+            text = "The block will lift automatically when the cooldown ends."
+            setTextColor(Color.parseColor("#8FA5AE"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+        }
+
+        card.addView(badge)
+        card.addView(space(dp(20)))
+        card.addView(title)
+        card.addView(space(dp(12)))
+        card.addView(message)
+        card.addView(space(dp(18)))
+        card.addView(hint)
+        root.addView(card, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER,
+        ))
 
         blockView = root
+        blockBadgeView = badge
         blockTitleView = title
         blockMessageView = message
         addView(root, fullScreenParams())
+    }
+
+    private fun actionButton(
+        text: String,
+        backgroundColor: Int,
+        textColor: Int,
+        onClick: () -> Unit,
+    ): Button {
+        return Button(this).apply {
+            this.text = text
+            setTextColor(textColor)
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+            background = roundedDrawable(backgroundColor, 999)
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setOnClickListener { onClick() }
+        }
     }
 
     private fun addView(view: View, params: WindowManager.LayoutParams) {
@@ -249,12 +356,14 @@ class OverlayService : Service() {
         removeView(warningView)
         removeView(blockView)
         timerView = null
-        timerTitleView = null
+        timerAppView = null
+        timerRemainingView = null
         timerProgressView = null
         warningView = null
         warningTitleView = null
         warningMessageView = null
         blockView = null
+        blockBadgeView = null
         blockTitleView = null
         blockMessageView = null
     }
@@ -282,7 +391,7 @@ class OverlayService : Service() {
     private fun interactiveParams(): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
@@ -321,6 +430,40 @@ class OverlayService : Service() {
             .setContentText("Showing timer and block overlays when limits trigger.")
             .setOngoing(true)
             .build()
+    }
+
+    private fun roundedDrawable(
+        color: Int,
+        radiusDp: Int,
+        strokeColor: Int? = null,
+        strokeDp: Int = 0,
+    ): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(radiusDp).toFloat()
+            setColor(color)
+            if (strokeColor != null && strokeDp > 0) {
+                setStroke(dp(strokeDp), strokeColor)
+            }
+        }
+    }
+
+    private fun space(size: Int, horizontal: Boolean = false): View {
+        return View(this).apply {
+            layoutParams = if (horizontal) {
+                LinearLayout.LayoutParams(size, 1)
+            } else {
+                LinearLayout.LayoutParams(1, size)
+            }
+        }
+    }
+
+    private fun dp(value: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            value.toFloat(),
+            resources.displayMetrics,
+        ).toInt()
     }
 
     private fun formatSeconds(totalSeconds: Int): String {

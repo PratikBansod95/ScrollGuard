@@ -1,5 +1,7 @@
 package com.scrollguard.services
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,6 +18,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.OvershootInterpolator
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -54,10 +57,12 @@ class OverlayService : Service() {
     private var timerProgressView: ProgressBar? = null
 
     private var warningView: FrameLayout? = null
+    private var warningCardView: LinearLayout? = null
     private var warningTitleView: TextView? = null
     private var warningMessageView: TextView? = null
 
     private var blockView: FrameLayout? = null
+    private var blockCardView: LinearLayout? = null
     private var blockBadgeView: TextView? = null
     private var blockTitleView: TextView? = null
     private var blockMessageView: TextView? = null
@@ -102,11 +107,19 @@ class OverlayService : Service() {
         timerRemainingView?.text = "${formatSeconds(remainingSeconds)} left"
         timerProgressView?.max = totalSeconds.coerceAtLeast(1)
         timerProgressView?.progress = remainingSeconds.coerceAtLeast(0)
-        timerView?.visibility = View.VISIBLE
 
-        warningView?.visibility = View.GONE
+        animateOut(warningView)
         if (blockView?.visibility == View.VISIBLE) {
-            timerView?.visibility = View.GONE
+            animateOut(timerView)
+        } else {
+            animateIn(
+                view = timerView,
+                fromTranslationY = -dp(18).toFloat(),
+                toTranslationY = 0f,
+                fromScale = 1f,
+                toScale = 1f,
+                duration = 220L,
+            )
         }
     }
 
@@ -114,7 +127,23 @@ class OverlayService : Service() {
         ensureWarningView()
         warningTitleView?.text = title
         warningMessageView?.text = message
-        warningView?.visibility = View.VISIBLE
+        animateIn(
+            view = warningView,
+            fromTranslationY = dp(12).toFloat(),
+            toTranslationY = 0f,
+            fromScale = 1f,
+            toScale = 1f,
+            duration = 180L,
+        )
+        animateIn(
+            view = warningCardView,
+            fromTranslationY = dp(18).toFloat(),
+            toTranslationY = 0f,
+            fromScale = 0.96f,
+            toScale = 1f,
+            duration = 240L,
+            useOvershoot = true,
+        )
     }
 
     private fun showBlock(appName: String, cooldownSeconds: Int) {
@@ -122,9 +151,24 @@ class OverlayService : Service() {
         blockBadgeView?.text = "Cooldown active"
         blockTitleView?.text = "Put the phone down for a minute"
         blockMessageView?.text = "$appName is locked for ${formatSeconds(cooldownSeconds)} so this session can reset."
-        blockView?.visibility = View.VISIBLE
-        timerView?.visibility = View.GONE
-        warningView?.visibility = View.GONE
+        animateOut(timerView)
+        animateOut(warningView)
+        animateIn(
+            view = blockView,
+            fromTranslationY = 0f,
+            toTranslationY = 0f,
+            fromScale = 1f,
+            toScale = 1f,
+            duration = 220L,
+        )
+        animateIn(
+            view = blockCardView,
+            fromTranslationY = dp(14).toFloat(),
+            toTranslationY = 0f,
+            fromScale = 0.98f,
+            toScale = 1f,
+            duration = 260L,
+        )
     }
 
     private fun ensureTimerView() {
@@ -132,6 +176,7 @@ class OverlayService : Service() {
 
         val root = FrameLayout(this).apply {
             visibility = View.GONE
+            alpha = 0f
             setPadding(dp(12), dp(12), dp(12), 0)
         }
         val card = LinearLayout(this).apply {
@@ -190,6 +235,7 @@ class OverlayService : Service() {
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#80311D09"))
             visibility = View.GONE
+            alpha = 0f
             setPadding(dp(20), dp(20), dp(20), dp(20))
         }
         val card = LinearLayout(this).apply {
@@ -226,7 +272,7 @@ class OverlayService : Service() {
         ) {
             val sessionManager = (application as ScrollGuardApp).container.sessionManager
             sessionManager.extendCurrentSession(10)
-            warningView?.visibility = View.GONE
+            animateOut(warningView)
         }
         val closeButton = actionButton(
             text = "Close app",
@@ -239,7 +285,7 @@ class OverlayService : Service() {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 },
             )
-            warningView?.visibility = View.GONE
+            animateOut(warningView)
         }
 
         buttonRow.addView(closeButton)
@@ -260,6 +306,7 @@ class OverlayService : Service() {
         ))
 
         warningView = root
+        warningCardView = card
         warningTitleView = title
         warningMessageView = message
         addView(root, interactiveParams())
@@ -271,6 +318,7 @@ class OverlayService : Service() {
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#E6111B22"))
             visibility = View.GONE
+            alpha = 0f
             setPadding(dp(24), dp(24), dp(24), dp(24))
         }
         val card = LinearLayout(this).apply {
@@ -320,6 +368,7 @@ class OverlayService : Service() {
         ))
 
         blockView = root
+        blockCardView = card
         blockBadgeView = badge
         blockTitleView = title
         blockMessageView = message
@@ -345,6 +394,59 @@ class OverlayService : Service() {
         }
     }
 
+    private fun animateIn(
+        view: View?,
+        fromTranslationY: Float,
+        toTranslationY: Float,
+        fromScale: Float,
+        toScale: Float,
+        duration: Long,
+        useOvershoot: Boolean = false,
+    ) {
+        view ?: return
+        if (view.visibility == View.VISIBLE && view.alpha == 1f && view.translationY == toTranslationY) {
+            return
+        }
+        view.animate().cancel()
+        view.visibility = View.VISIBLE
+        view.alpha = 0f
+        view.translationY = fromTranslationY
+        view.scaleX = fromScale
+        view.scaleY = fromScale
+        view.animate()
+            .alpha(1f)
+            .translationY(toTranslationY)
+            .scaleX(toScale)
+            .scaleY(toScale)
+            .setDuration(duration)
+            .setInterpolator(if (useOvershoot) OvershootInterpolator(0.8f) else android.view.animation.DecelerateInterpolator())
+            .start()
+    }
+
+    private fun animateOut(view: View?) {
+        view ?: return
+        if (view.visibility != View.VISIBLE) {
+            view.alpha = 0f
+            return
+        }
+        view.animate().cancel()
+        view.animate()
+            .alpha(0f)
+            .translationY(view.translationY - dp(6))
+            .setDuration(140L)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .setListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    view.visibility = View.GONE
+                    view.translationY = 0f
+                    view.scaleX = 1f
+                    view.scaleY = 1f
+                    view.animate().setListener(null)
+                }
+            })
+            .start()
+    }
+
     private fun addView(view: View, params: WindowManager.LayoutParams) {
         if (view.parent == null) {
             windowManager.addView(view, params)
@@ -360,9 +462,11 @@ class OverlayService : Service() {
         timerRemainingView = null
         timerProgressView = null
         warningView = null
+        warningCardView = null
         warningTitleView = null
         warningMessageView = null
         blockView = null
+        blockCardView = null
         blockBadgeView = null
         blockTitleView = null
         blockMessageView = null

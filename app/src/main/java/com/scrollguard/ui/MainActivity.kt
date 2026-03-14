@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +71,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +79,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -125,6 +129,9 @@ data class MainUiState(
     val stats: DashboardStats = DashboardStats(),
     val installedApps: List<InstalledApp> = emptyList(),
     val monitoringActive: Boolean = false,
+    val hasUsageAccess: Boolean = false,
+    val hasOverlayAccess: Boolean = false,
+    val hasAccessibilityAccess: Boolean = false,
     val defaultSessionSeconds: Int = 60,
     val defaultCooldownSeconds: Int = 300,
 )
@@ -139,7 +146,6 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
 
     init {
         _uiState.value = _uiState.value.copy(
-            monitoringActive = prefs.getBoolean(KEY_MONITORING_ACTIVE, false),
             defaultSessionSeconds = prefs.getInt(KEY_DEFAULT_SESSION_SECONDS, 60),
             defaultCooldownSeconds = prefs.getInt(KEY_DEFAULT_COOLDOWN_SECONDS, 300),
         )
@@ -153,6 +159,7 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
                 _uiState.value = _uiState.value.copy(stats = stats)
             }
         }
+        refreshRuntimeState()
         loadApps()
     }
 
@@ -168,8 +175,8 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
                 AppLimitEntity(
                     packageName = appItem.packageName,
                     appName = appItem.appName,
-                    timeLimitSeconds = timeLimitSeconds,
-                    cooldownSeconds = cooldownSeconds,
+                    timeLimitSeconds = timeLimitSeconds.coerceIn(MIN_SESSION_SECONDS, MAX_SESSION_SECONDS),
+                    cooldownSeconds = cooldownSeconds.coerceIn(MIN_COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS),
                 ),
             )
         }
@@ -194,14 +201,26 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
 
     fun startMonitoring(context: Context) {
         ContextCompat.startForegroundService(context, Intent(context, AppMonitorService::class.java))
-        prefs.edit().putBoolean(KEY_MONITORING_ACTIVE, true).apply()
         _uiState.value = _uiState.value.copy(monitoringActive = true)
+        refreshRuntimeState()
+    }
+
+    fun refreshRuntimeState() {
+        _uiState.value = _uiState.value.copy(
+            monitoringActive = PermissionUtils.isMonitoringActive(app),
+            hasUsageAccess = PermissionUtils.hasUsageAccess(app),
+            hasOverlayAccess = PermissionUtils.canDrawOverlays(app),
+            hasAccessibilityAccess = PermissionUtils.isAccessibilityEnabled(app),
+        )
     }
 
     companion object {
-        private const val KEY_MONITORING_ACTIVE = "monitoring_active"
         private const val KEY_DEFAULT_SESSION_SECONDS = "default_session_seconds"
         private const val KEY_DEFAULT_COOLDOWN_SECONDS = "default_cooldown_seconds"
+        private const val MIN_SESSION_SECONDS = 15
+        private const val MAX_SESSION_SECONDS = 15 * 60
+        private const val MIN_COOLDOWN_SECONDS = 60
+        private const val MAX_COOLDOWN_SECONDS = 60 * 60
 
         fun factory(app: ScrollGuardApp): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
@@ -222,6 +241,7 @@ private data class BottomDestination(
 @Composable
 private fun ScrollGuardRoot(viewModel: MainViewModel) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val uiState by viewModel.uiState.collectAsState()
     val navController = rememberNavController()
     val currentEntry by navController.currentBackStackEntryAsState()
@@ -231,6 +251,18 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
         BottomDestination("limits", "Limits", Icons.Rounded.SettingsApplications),
         BottomDestination("stats", "Stats", Icons.Rounded.BarChart),
     )
+
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshRuntimeState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -263,7 +295,15 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                 destinations.forEach { destination ->
                     NavigationBarItem(
                         selected = currentRoute == destination.route,
-                        onClick = { navController.navigate(destination.route) },
+                        onClick = {
+                            navController.navigate(destination.route) {
+                                launchSingleTop = true
+                                restoreState = true
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                            }
+                        },
                         icon = { Icon(destination.icon, contentDescription = null) },
                         label = { Text(destination.label) },
                     )
@@ -278,9 +318,9 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
         ) {
             composable("home") {
                 HomeScreen(
-                    hasUsageAccess = PermissionUtils.hasUsageAccess(context),
-                    hasOverlay = PermissionUtils.canDrawOverlays(context),
-                    hasAccessibility = PermissionUtils.isAccessibilityEnabled(context),
+                    hasUsageAccess = uiState.hasUsageAccess,
+                    hasOverlay = uiState.hasOverlayAccess,
+                    hasAccessibility = uiState.hasAccessibilityAccess,
                     monitoredCount = uiState.limits.size,
                     stats = uiState.stats,
                     monitoringActive = uiState.monitoringActive,
@@ -606,16 +646,23 @@ fun AppSelectionScreen(
     val expandedCards = remember { mutableStateMapOf<String, Boolean>() }
     var searchQuery by remember { mutableStateOf("") }
     var showOnlyActive by remember { mutableStateOf(false) }
+    var showSuggestedOnly by remember { mutableStateOf(false) }
     var selectedDefaultSession by remember(defaultSessionSeconds) { mutableStateOf(defaultSessionSeconds) }
     var selectedDefaultCooldown by remember(defaultCooldownSeconds) { mutableStateOf(defaultCooldownSeconds) }
+    val suggestedCount = installedApps.count { it.isSuggested }
 
     val filteredApps = installedApps
         .filter { app ->
             val matchesQuery = searchQuery.isBlank() || app.appName.contains(searchQuery, ignoreCase = true)
             val matchesFilter = !showOnlyActive || currentLimits.containsKey(app.packageName)
-            matchesQuery && matchesFilter
+            val matchesSuggested = !showSuggestedOnly || app.isSuggested
+            matchesQuery && matchesFilter && matchesSuggested
         }
-        .sortedWith(compareByDescending<InstalledApp> { currentLimits.containsKey(it.packageName) }.thenBy { it.appName.lowercase() })
+        .sortedWith(
+            compareByDescending<InstalledApp> { currentLimits.containsKey(it.packageName) }
+                .thenByDescending { it.isSuggested }
+                .thenBy { it.appName.lowercase() },
+        )
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -626,8 +673,11 @@ fun AppSelectionScreen(
             Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF5F6))) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Choose the apps to limit", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    Text("Keep sessions short and cooldowns meaningful. A good starting point is 60 seconds in-app and 5 minutes away.")
+                    Text("Start with the apps that usually pull you into feeds. Suggested apps are surfaced first, and presets keep setup fast.")
                     Text("$monitoredCount apps currently protected", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (suggestedCount > 0) {
+                        StatusHint("Suggested first", "$suggestedCount likely doom-scroll apps were detected on this phone.")
+                    }
                     PresetSection(
                         title = "Default session preset",
                         values = listOf(45, 60, 120),
@@ -673,13 +723,18 @@ fun AppSelectionScreen(
                     onClick = { showOnlyActive = true },
                     label = { Text("Protected only") },
                 )
+                FilterChip(
+                    selected = showSuggestedOnly,
+                    onClick = { showSuggestedOnly = !showSuggestedOnly },
+                    label = { Text("Suggested") },
+                )
             }
         }
         if (filteredApps.isEmpty()) {
             item {
                 EmptyStateCard(
-                    title = if (searchQuery.isBlank()) "No apps match this filter" else "No apps found",
-                    body = if (searchQuery.isBlank()) "Switch back to All apps or add limits to see protected apps here." else "Try a different app name or clear the search field.",
+                    title = if (searchQuery.isBlank()) "No apps match this view" else "No apps found",
+                    body = if (searchQuery.isBlank()) "Try turning off Protected only or Suggested to see more apps." else "Try a different app name or clear the search field.",
                 )
             }
         } else {
@@ -693,6 +748,12 @@ fun AppSelectionScreen(
                 }
 
                 val isExpanded = expandedCards[app.packageName] ?: false
+                val sessionValue = timeInputs[app.packageName]?.toIntOrNull()
+                val cooldownValue = cooldownInputs[app.packageName]?.toIntOrNull()
+                val sessionError = sessionValidationError(sessionValue)
+                val cooldownError = cooldownValidationError(cooldownValue)
+                val canSave = sessionError == null && cooldownError == null
+
                 Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         Row(
@@ -707,9 +768,9 @@ fun AppSelectionScreen(
                                 Text(app.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                                 Text(
                                     if (existing == null) {
-                                        "Not monitored yet"
+                                        if (app.isSuggested) "Suggested for protection" else "Not monitored yet"
                                     } else {
-                                        "${timeInputs[app.packageName]}s session • ${formatPresetDuration(cooldownInputs[app.packageName]?.toIntOrNull() ?: 300)} cooldown"
+                                        "${formatDuration(sessionValue ?: 60)} session â€¢ ${formatDuration(cooldownValue ?: 300)} cooldown"
                                     },
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium,
@@ -728,19 +789,31 @@ fun AppSelectionScreen(
                                     value = timeInputs[app.packageName].orEmpty(),
                                     onValueChange = { timeInputs[app.packageName] = it.filter(Char::isDigit) },
                                     modifier = Modifier.weight(1f),
-                                    label = { Text("Session sec") },
+                                    label = { Text("Session (sec)") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(18.dp),
+                                    isError = sessionError != null,
+                                    supportingText = {
+                                        Text(sessionError ?: "Recommended 45-120 seconds for quick interruption.")
+                                    },
                                 )
                                 OutlinedTextField(
                                     value = cooldownInputs[app.packageName].orEmpty(),
                                     onValueChange = { cooldownInputs[app.packageName] = it.filter(Char::isDigit) },
                                     modifier = Modifier.weight(1f),
-                                    label = { Text("Cooldown sec") },
+                                    label = { Text("Cooldown (sec)") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(18.dp),
+                                    isError = cooldownError != null,
+                                    supportingText = {
+                                        Text(cooldownError ?: "Recommended 5-15 minutes to break the loop.")
+                                    },
                                 )
                             }
+                            StatusHint(
+                                "Current setup",
+                                "${formatDuration(sessionValue ?: defaultSessionSeconds)} inside the app, then ${formatDuration(cooldownValue ?: defaultCooldownSeconds)} away from it.",
+                            )
                             PresetSection(
                                 title = "Quick session presets",
                                 values = listOf(45, 60, 120),
@@ -769,11 +842,12 @@ fun AppSelectionScreen(
                                     onClick = {
                                         onSaveLimit(
                                             app,
-                                            timeInputs[app.packageName]?.toIntOrNull() ?: 60,
-                                            cooldownInputs[app.packageName]?.toIntOrNull() ?: 300,
+                                            sessionValue ?: 60,
+                                            cooldownValue ?: 300,
                                         )
                                     },
                                     shape = RoundedCornerShape(18.dp),
+                                    enabled = canSave,
                                 ) {
                                     Text(if (existing == null) "Save limit" else "Update limit")
                                 }
@@ -796,6 +870,16 @@ private fun EmptyStateCard(title: String, body: String) {
     Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
         Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun StatusHint(title: String, body: String) {
+    Surface(shape = RoundedCornerShape(18.dp), color = Mist) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = Ink)
             Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -859,9 +943,9 @@ fun DashboardScreen(stats: DashboardStats, monitoredCount: Int) {
         }
         item {
             DashboardWideCard(
-                title = "Most recent blocked app",
-                value = stats.mostUsedApp,
-                subtitle = "The app that most recently hit its session limit.",
+                title = "Most blocked app today",
+                value = stats.topBlockedApp,
+                subtitle = "The app that hit the limit most often today.",
                 icon = Icons.Rounded.SettingsApplications,
                 tint = Reef,
             )
@@ -958,6 +1042,34 @@ private fun formatPresetDuration(seconds: Int): String {
         "${seconds / 60}m"
     } else {
         "${seconds}s"
+    }
+}
+
+private fun formatDuration(seconds: Int): String {
+    val minutes = seconds / 60
+    val remainder = seconds % 60
+    return when {
+        minutes > 0 && remainder > 0 -> "${minutes}m ${remainder}s"
+        minutes > 0 -> "${minutes}m"
+        else -> "${seconds}s"
+    }
+}
+
+private fun sessionValidationError(value: Int?): String? {
+    return when {
+        value == null -> "Enter a session length."
+        value < 15 -> "Use at least 15 seconds."
+        value > 15 * 60 -> "Keep sessions below 15 minutes."
+        else -> null
+    }
+}
+
+private fun cooldownValidationError(value: Int?): String? {
+    return when {
+        value == null -> "Enter a cooldown length."
+        value < 60 -> "Use at least 1 minute."
+        value > 60 * 60 -> "Keep cooldown below 60 minutes."
+        else -> null
     }
 }
 

@@ -24,14 +24,19 @@ import kotlinx.coroutines.launch
 class AppMonitorService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var usageStatsManager: UsageStatsManager
+    private val monitoringPrefs by lazy {
+        getSharedPreferences(PREFS_MONITORING, Context.MODE_PRIVATE)
+    }
     private var monitorJob: Job? = null
     private var lastForegroundPackage: String? = null
+    private var lastForegroundDetectedAt = 0L
 
     override fun onCreate() {
         super.onCreate()
         usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         ensureChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        updateMonitoringHeartbeat(isRunning = true)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -39,6 +44,7 @@ class AppMonitorService : Service() {
             monitorJob = serviceScope.launch {
                 val sessionManager = (application as ScrollGuardApp).container.sessionManager
                 while (isActive) {
+                    updateMonitoringHeartbeat(isRunning = true)
                     sessionManager.onForegroundAppChanged(currentForegroundPackage())
                     delay(1_000L)
                 }
@@ -49,6 +55,7 @@ class AppMonitorService : Service() {
 
     override fun onDestroy() {
         monitorJob?.cancel()
+        updateMonitoringHeartbeat(isRunning = false)
         super.onDestroy()
     }
 
@@ -68,8 +75,20 @@ class AppMonitorService : Service() {
         }
         if (!resumedPackage.isNullOrBlank()) {
             lastForegroundPackage = resumedPackage
+            lastForegroundDetectedAt = end
         }
-        return lastForegroundPackage
+        return if (end - lastForegroundDetectedAt <= STALE_FOREGROUND_TIMEOUT_MS) {
+            lastForegroundPackage
+        } else {
+            null
+        }
+    }
+
+    private fun updateMonitoringHeartbeat(isRunning: Boolean) {
+        monitoringPrefs.edit()
+            .putBoolean(KEY_MONITORING_ENABLED, isRunning)
+            .putLong(KEY_LAST_HEARTBEAT_AT, System.currentTimeMillis())
+            .apply()
     }
 
     private fun ensureChannel() {
@@ -95,7 +114,12 @@ class AppMonitorService : Service() {
     }
 
     companion object {
+        const val PREFS_MONITORING = "scrollguard_monitoring"
+        const val KEY_MONITORING_ENABLED = "monitoring_enabled"
+        const val KEY_LAST_HEARTBEAT_AT = "last_heartbeat_at"
+
         private const val CHANNEL_ID = "monitor_channel"
         private const val NOTIFICATION_ID = 2001
+        private const val STALE_FOREGROUND_TIMEOUT_MS = 3_500L
     }
 }

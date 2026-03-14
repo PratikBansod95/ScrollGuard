@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
+import com.scrollguard.services.AppMonitorService
 
 object PermissionUtils {
     fun hasUsageAccess(context: Context): Boolean {
@@ -42,5 +43,12 @@ object PermissionUtils {
         ).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+    }
+
+    fun isMonitoringActive(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(AppMonitorService.PREFS_MONITORING, Context.MODE_PRIVATE)
+        val enabled = prefs.getBoolean(AppMonitorService.KEY_MONITORING_ENABLED, false)
+        val lastHeartbeatAt = prefs.getLong(AppMonitorService.KEY_LAST_HEARTBEAT_AT, 0L)
+        return enabled && System.currentTimeMillis() - lastHeartbeatAt <= 5_000L
     }
 }

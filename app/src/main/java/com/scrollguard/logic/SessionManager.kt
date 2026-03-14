@@ -9,7 +9,8 @@ import com.scrollguard.services.OverlayService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.concurrent.ConcurrentHashMap
+import java.time.LocalDate
+import java.time.ZoneId
 
 data class SessionState(
     val packageName: String,
@@ -23,7 +24,7 @@ data class SessionState(
 data class DashboardStats(
     val blockedSessionsToday: Int = 0,
     val doomScrollDetections: Int = 0,
-    val mostUsedApp: String = "None",
+    val topBlockedApp: String = "None",
 )
 
 class SessionManager(
@@ -31,6 +32,7 @@ class SessionManager(
     private val repository: AppRepository,
 ) {
     private val prefs = context.getSharedPreferences("scrollguard_stats", Context.MODE_PRIVATE)
+    private val zoneId = ZoneId.systemDefault()
 
     private val _activeSession = MutableStateFlow<SessionState?>(null)
     val activeSession: StateFlow<SessionState?> = _activeSession.asStateFlow()
@@ -38,14 +40,25 @@ class SessionManager(
     private val _dashboardStats = MutableStateFlow(loadStats())
     val dashboardStats: StateFlow<DashboardStats> = _dashboardStats.asStateFlow()
 
-    private val cooldowns = ConcurrentHashMap<String, Long>()
     private var activePackageName: String? = null
     private var sessionStartMillis = 0L
     private var lastWarningAt = 0L
     private var warningsThisSession = 0
 
+    init {
+        activePackageName = prefs.getString(KEY_ACTIVE_PACKAGE, null)
+        sessionStartMillis = prefs.getLong(KEY_SESSION_START_MILLIS, 0L)
+        ensureStatsForToday()
+        _dashboardStats.value = loadStats()
+    }
+
     suspend fun onForegroundAppChanged(packageName: String?) {
-        if (packageName.isNullOrBlank()) return
+        if (packageName.isNullOrBlank()) {
+            if (activePackageName != null) {
+                clearSession()
+            }
+            return
+        }
         if (packageName == context.packageName) {
             if (activePackageName != null) {
                 clearSession()
@@ -61,7 +74,7 @@ class SessionManager(
             return
         }
 
-        val cooldownRemaining = cooldownRemaining(packageName)
+        val cooldownRemaining = cooldownRemaining(limit)
         if (cooldownRemaining > 0) {
             showBlock(limit, cooldownRemaining)
             activePackageName = packageName
@@ -73,6 +86,7 @@ class SessionManager(
             sessionStartMillis = System.currentTimeMillis()
             lastWarningAt = 0L
             warningsThisSession = 0
+            persistSessionState()
         }
 
         val elapsedSeconds = ((System.currentTimeMillis() - sessionStartMillis) / 1000L).toInt()
@@ -81,7 +95,7 @@ class SessionManager(
         if (remainingSeconds == 0) {
             startCooldown(limit)
             showBlock(limit, limit.cooldownSeconds)
-            incrementBlockedSessions(limit.appName)
+            incrementBlockedSessions(limit.packageName, limit.appName)
             return
         }
 
@@ -150,6 +164,7 @@ class SessionManager(
         _activeSession.value = session.copy(
             remainingSeconds = session.remainingSeconds + extraSeconds,
         )
+        persistSessionState()
     }
 
     fun clearSession() {
@@ -158,11 +173,17 @@ class SessionManager(
         lastWarningAt = 0L
         warningsThisSession = 0
         _activeSession.value = null
+        clearPersistedSessionState()
         dispatchOverlay(OverlayCommand.HideAll)
     }
 
-    private fun startCooldown(limit: AppLimitEntity) {
-        cooldowns[limit.packageName] = System.currentTimeMillis() + limit.cooldownSeconds * 1_000L
+    private suspend fun startCooldown(limit: AppLimitEntity) {
+        val cooldownEndMillis = System.currentTimeMillis() + limit.cooldownSeconds * 1_000L
+        repository.updateCooldownEnd(limit.packageName, cooldownEndMillis)
+        sessionStartMillis = 0L
+        lastWarningAt = 0L
+        warningsThisSession = 0
+        clearPersistedSessionState()
         _activeSession.value = SessionState(
             packageName = limit.packageName,
             appName = limit.appName,
@@ -190,11 +211,15 @@ class SessionManager(
         )
     }
 
-    private fun cooldownRemaining(packageName: String): Int {
-        val end = cooldowns[packageName] ?: return 0
+    private suspend fun cooldownRemaining(limit: AppLimitEntity): Int {
+        val end = limit.cooldownEndMillis
+        if (end <= 0L) {
+            return 0
+        }
+
         val remaining = ((end - System.currentTimeMillis()) / 1000L).toInt()
         if (remaining <= 0) {
-            cooldowns.remove(packageName)
+            repository.updateCooldownEnd(limit.packageName, 0L)
         }
         return remaining.coerceAtLeast(0)
     }
@@ -204,32 +229,88 @@ class SessionManager(
     }
 
     private fun loadStats(): DashboardStats {
+        ensureStatsForToday()
         return DashboardStats(
             blockedSessionsToday = prefs.getInt(KEY_BLOCKED_SESSIONS, 0),
             doomScrollDetections = prefs.getInt(KEY_DOOM_DETECTIONS, 0),
-            mostUsedApp = prefs.getString(KEY_MOST_USED_APP, "None") ?: "None",
+            topBlockedApp = resolveTopBlockedApp(),
         )
     }
 
-    private fun incrementBlockedSessions(appName: String) {
+    private fun incrementBlockedSessions(packageName: String, appName: String) {
+        ensureStatsForToday()
+        val perAppKey = "$KEY_BLOCKED_COUNT_PREFIX$packageName"
         prefs.edit()
             .putInt(KEY_BLOCKED_SESSIONS, prefs.getInt(KEY_BLOCKED_SESSIONS, 0) + 1)
-            .putString(KEY_MOST_USED_APP, appName)
+            .putInt(perAppKey, prefs.getInt(perAppKey, 0) + 1)
+            .putString("$KEY_BLOCKED_APP_NAME_PREFIX$packageName", appName)
             .apply()
         _dashboardStats.value = loadStats()
     }
 
     private fun incrementDoomScrollDetections() {
+        ensureStatsForToday()
         prefs.edit()
             .putInt(KEY_DOOM_DETECTIONS, prefs.getInt(KEY_DOOM_DETECTIONS, 0) + 1)
             .apply()
         _dashboardStats.value = loadStats()
     }
 
+    private fun persistSessionState() {
+        prefs.edit()
+            .putString(KEY_ACTIVE_PACKAGE, activePackageName)
+            .putLong(KEY_SESSION_START_MILLIS, sessionStartMillis)
+            .apply()
+    }
+
+    private fun clearPersistedSessionState() {
+        prefs.edit()
+            .remove(KEY_ACTIVE_PACKAGE)
+            .remove(KEY_SESSION_START_MILLIS)
+            .apply()
+    }
+
+    private fun ensureStatsForToday() {
+        val today = LocalDate.now(zoneId).toString()
+        val recordedDay = prefs.getString(KEY_STATS_DATE, null)
+        if (recordedDay == today) {
+            return
+        }
+
+        val editor = prefs.edit()
+            .putString(KEY_STATS_DATE, today)
+            .putInt(KEY_BLOCKED_SESSIONS, 0)
+            .putInt(KEY_DOOM_DETECTIONS, 0)
+
+        prefs.all.keys
+            .filter { key ->
+                key.startsWith(KEY_BLOCKED_COUNT_PREFIX) || key.startsWith(KEY_BLOCKED_APP_NAME_PREFIX)
+            }
+            .forEach(editor::remove)
+
+        editor.apply()
+    }
+
+    private fun resolveTopBlockedApp(): String {
+        val topEntry = prefs.all.entries
+            .filter { it.key.startsWith(KEY_BLOCKED_COUNT_PREFIX) }
+            .maxByOrNull { (it.value as? Int) ?: 0 }
+            ?: return "None"
+
+        val packageName = topEntry.key.removePrefix(KEY_BLOCKED_COUNT_PREFIX)
+        val count = (topEntry.value as? Int) ?: 0
+        val appName = prefs.getString("$KEY_BLOCKED_APP_NAME_PREFIX$packageName", packageName) ?: packageName
+        return if (count > 0) "$appName ($count)" else "None"
+    }
+
     companion object {
+        private const val KEY_STATS_DATE = "stats_date"
         private const val KEY_BLOCKED_SESSIONS = "blocked_sessions_today"
         private const val KEY_DOOM_DETECTIONS = "doom_scroll_detections"
-        private const val KEY_MOST_USED_APP = "most_used_app"
+        private const val KEY_BLOCKED_COUNT_PREFIX = "blocked_count_"
+        private const val KEY_BLOCKED_APP_NAME_PREFIX = "blocked_app_name_"
+        private const val KEY_ACTIVE_PACKAGE = "active_package"
+        private const val KEY_SESSION_START_MILLIS = "session_start_millis"
         private const val MIN_SESSION_AGE_FOR_WARNING_MS = 10_000L
         private const val WARNING_COOLDOWN_MS = 25_000L
     }

@@ -11,7 +11,14 @@ class AppRepository(
 
     suspend fun getLimit(packageName: String): AppLimitEntity? = dao.getByPackageName(packageName)
 
-    suspend fun saveLimit(limit: AppLimitEntity) = dao.upsert(limit)
+    suspend fun saveLimit(limit: AppLimitEntity) {
+        val existing = dao.getByPackageName(limit.packageName)
+        dao.upsert(limit.copy(cooldownEndMillis = existing?.cooldownEndMillis ?: 0L))
+    }
+
+    suspend fun updateCooldownEnd(packageName: String, cooldownEndMillis: Long) {
+        dao.updateCooldownEnd(packageName, cooldownEndMillis)
+    }
 
     suspend fun removeLimit(packageName: String) = dao.delete(packageName)
 }

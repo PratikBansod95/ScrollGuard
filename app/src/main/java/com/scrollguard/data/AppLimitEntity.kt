@@ -9,4 +9,5 @@ data class AppLimitEntity(
     val appName: String,
     val timeLimitSeconds: Int,
     val cooldownSeconds: Int,
+    val cooldownEndMillis: Long = 0L,
 )

@@ -20,6 +20,9 @@ interface AppLimitDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(limit: AppLimitEntity)
 
+    @Query("UPDATE app_limits SET cooldownEndMillis = :cooldownEndMillis WHERE packageName = :packageName")
+    suspend fun updateCooldownEnd(packageName: String, cooldownEndMillis: Long)
+
     @Query("DELETE FROM app_limits WHERE packageName = :packageName")
     suspend fun delete(packageName: String)
 }

@@ -40,6 +40,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -55,7 +56,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -118,16 +121,19 @@ data class MainUiState(
     val limits: List<AppLimitEntity> = emptyList(),
     val stats: DashboardStats = DashboardStats(),
     val installedApps: List<InstalledApp> = emptyList(),
+    val monitoringActive: Boolean = false,
 )
 
 class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
     private val repository = app.container.repository
     private val sessionManager = app.container.sessionManager
+    private val prefs = app.getSharedPreferences("scrollguard_ui", Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
+        _uiState.value = _uiState.value.copy(monitoringActive = prefs.getBoolean(KEY_MONITORING_ACTIVE, false))
         viewModelScope.launch {
             repository.observeLimits().collect { limits ->
                 _uiState.value = _uiState.value.copy(limits = limits)
@@ -168,9 +174,13 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
 
     fun startMonitoring(context: Context) {
         ContextCompat.startForegroundService(context, Intent(context, AppMonitorService::class.java))
+        prefs.edit().putBoolean(KEY_MONITORING_ACTIVE, true).apply()
+        _uiState.value = _uiState.value.copy(monitoringActive = true)
     }
 
     companion object {
+        private const val KEY_MONITORING_ACTIVE = "monitoring_active"
+
         fun factory(app: ScrollGuardApp): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -251,6 +261,7 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     hasAccessibility = PermissionUtils.isAccessibilityEnabled(context),
                     monitoredCount = uiState.limits.size,
                     stats = uiState.stats,
+                    monitoringActive = uiState.monitoringActive,
                     onOpenUsageAccess = { context.startActivity(PermissionUtils.usageAccessIntent()) },
                     onOpenOverlayAccess = { context.startActivity(PermissionUtils.overlayIntent(context)) },
                     onOpenAccessibility = { context.startActivity(PermissionUtils.accessibilityIntent()) },
@@ -261,6 +272,7 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                 AppSelectionScreen(
                     installedApps = uiState.installedApps,
                     currentLimits = uiState.limits.associateBy { it.packageName },
+                    monitoredCount = uiState.limits.size,
                     onSaveLimit = viewModel::saveLimit,
                     onRemoveLimit = viewModel::removeLimit,
                 )
@@ -279,6 +291,7 @@ private fun HomeScreen(
     hasAccessibility: Boolean,
     monitoredCount: Int,
     stats: DashboardStats,
+    monitoringActive: Boolean,
     onOpenUsageAccess: () -> Unit,
     onOpenOverlayAccess: () -> Unit,
     onOpenAccessibility: () -> Unit,
@@ -299,6 +312,9 @@ private fun HomeScreen(
                 completedSteps = completedSteps,
                 onStartMonitoring = onStartMonitoring,
             )
+        }
+        item {
+            MonitoringStatusCard(monitoringActive = monitoringActive, monitoredCount = monitoredCount)
         }
         item {
             QuickStatsStrip(stats = stats, monitoredCount = monitoredCount)
@@ -393,6 +409,44 @@ private fun FocusHeroCard(
                     Text(if (monitoredCount > 0) "Start protection" else "Add apps in Limits")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MonitoringStatusCard(monitoringActive: Boolean, monitoredCount: Int) {
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(if (monitoringActive) Moss.copy(alpha = 0.16f) else Amber.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (monitoringActive) Icons.Rounded.CheckCircle else Icons.Rounded.Warning,
+                    contentDescription = null,
+                    tint = if (monitoringActive) Moss else Coral,
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(if (monitoringActive) "Monitoring is active" else "Monitoring has not been started yet", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (monitoringActive) {
+                        if (monitoredCount > 0) "$monitoredCount apps are ready for protection right now." else "Turn on app limits so protection has something to guard."
+                    } else {
+                        "After setup, tap Start protection on Home to begin watching your selected apps."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            StatusPill(active = monitoringActive)
         }
     }
 }
@@ -515,11 +569,20 @@ private fun TimelineRow(text: String) {
 fun AppSelectionScreen(
     installedApps: List<InstalledApp>,
     currentLimits: Map<String, AppLimitEntity>,
+    monitoredCount: Int,
     onSaveLimit: (InstalledApp, Int, Int) -> Unit,
     onRemoveLimit: (String) -> Unit,
 ) {
     val timeInputs = remember { mutableStateMapOf<String, String>() }
     val cooldownInputs = remember { mutableStateMapOf<String, String>() }
+    var searchQuery by remember { mutableStateOf("") }
+    var showOnlyActive by remember { mutableStateOf(false) }
+
+    val filteredApps = installedApps.filter { app ->
+        val matchesQuery = searchQuery.isBlank() || app.appName.contains(searchQuery, ignoreCase = true)
+        val matchesFilter = !showOnlyActive || currentLimits.containsKey(app.packageName)
+        matchesQuery && matchesFilter
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -528,74 +591,118 @@ fun AppSelectionScreen(
     ) {
         item {
             Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF5F6))) {
-                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Choose the apps to limit", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text("Keep sessions short and cooldowns meaningful. A good starting point is 60 seconds in-app and 5 minutes away.")
+                    Text("$monitoredCount apps currently protected", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
-        items(installedApps, key = { it.packageName }) { app ->
-            val existing = currentLimits[app.packageName]
-            if (!timeInputs.containsKey(app.packageName)) {
-                timeInputs[app.packageName] = existing?.timeLimitSeconds?.toString() ?: "60"
+        item {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Search apps") },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+            )
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(
+                    selected = !showOnlyActive,
+                    onClick = { showOnlyActive = false },
+                    label = { Text("All apps") },
+                )
+                FilterChip(
+                    selected = showOnlyActive,
+                    onClick = { showOnlyActive = true },
+                    label = { Text("Protected only") },
+                )
             }
-            if (!cooldownInputs.containsKey(app.packageName)) {
-                cooldownInputs[app.packageName] = existing?.cooldownSeconds?.toString() ?: "300"
+        }
+        if (filteredApps.isEmpty()) {
+            item {
+                EmptyStateCard(
+                    title = if (searchQuery.isBlank()) "No apps match this filter" else "No apps found",
+                    body = if (searchQuery.isBlank()) "Switch back to All apps or add limits to see protected apps here." else "Try a different app name or clear the search field.",
+                )
             }
+        } else {
+            items(filteredApps, key = { it.packageName }) { app ->
+                val existing = currentLimits[app.packageName]
+                if (!timeInputs.containsKey(app.packageName)) {
+                    timeInputs[app.packageName] = existing?.timeLimitSeconds?.toString() ?: "60"
+                }
+                if (!cooldownInputs.containsKey(app.packageName)) {
+                    cooldownInputs[app.packageName] = existing?.cooldownSeconds?.toString() ?: "300"
+                }
 
-            Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AppIcon(app = app)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(app.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                if (existing == null) "Not monitored yet" else "Currently limited",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyMedium,
+                Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            AppIcon(app = app)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(app.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    if (existing == null) "Not monitored yet" else "Currently limited",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                            StatusPill(active = existing != null)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedTextField(
+                                value = timeInputs[app.packageName].orEmpty(),
+                                onValueChange = { timeInputs[app.packageName] = it.filter(Char::isDigit) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Session sec") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(18.dp),
+                            )
+                            OutlinedTextField(
+                                value = cooldownInputs[app.packageName].orEmpty(),
+                                onValueChange = { cooldownInputs[app.packageName] = it.filter(Char::isDigit) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Cooldown sec") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(18.dp),
                             )
                         }
-                        StatusPill(active = existing != null)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(
-                            value = timeInputs[app.packageName].orEmpty(),
-                            onValueChange = { timeInputs[app.packageName] = it.filter(Char::isDigit) },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("Session sec") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(18.dp),
-                        )
-                        OutlinedTextField(
-                            value = cooldownInputs[app.packageName].orEmpty(),
-                            onValueChange = { cooldownInputs[app.packageName] = it.filter(Char::isDigit) },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("Cooldown sec") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(18.dp),
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(
-                            onClick = {
-                                onSaveLimit(
-                                    app,
-                                    timeInputs[app.packageName]?.toIntOrNull() ?: 60,
-                                    cooldownInputs[app.packageName]?.toIntOrNull() ?: 300,
-                                )
-                            },
-                            shape = RoundedCornerShape(18.dp),
-                        ) {
-                            Text(if (existing == null) "Save limit" else "Update limit")
-                        }
-                        if (existing != null) {
-                            OutlinedButton(onClick = { onRemoveLimit(app.packageName) }, shape = RoundedCornerShape(18.dp)) {
-                                Text("Remove")
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = {
+                                    onSaveLimit(
+                                        app,
+                                        timeInputs[app.packageName]?.toIntOrNull() ?: 60,
+                                        cooldownInputs[app.packageName]?.toIntOrNull() ?: 300,
+                                    )
+                                },
+                                shape = RoundedCornerShape(18.dp),
+                            ) {
+                                Text(if (existing == null) "Save limit" else "Update limit")
+                            }
+                            if (existing != null) {
+                                OutlinedButton(onClick = { onRemoveLimit(app.packageName) }, shape = RoundedCornerShape(18.dp)) {
+                                    Text("Remove")
+                                }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun EmptyStateCard(title: String, body: String) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -715,3 +822,15 @@ private fun DashboardWideCard(title: String, value: String, subtitle: String, ic
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ScrollGuard</string>
+    <string name="accessibility_service_label">ScrollGuard scroll detection</string>
+</resources>

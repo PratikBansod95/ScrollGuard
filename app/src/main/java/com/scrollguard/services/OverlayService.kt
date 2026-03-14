@@ -43,8 +43,18 @@ sealed class OverlayCommand {
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
-    private var timerView: View? = null
-    private var blockView: View? = null
+
+    private var timerView: LinearLayout? = null
+    private var timerTitleView: TextView? = null
+    private var timerProgressView: ProgressBar? = null
+
+    private var warningView: FrameLayout? = null
+    private var warningTitleView: TextView? = null
+    private var warningMessageView: TextView? = null
+
+    private var blockView: FrameLayout? = null
+    private var blockTitleView: TextView? = null
+    private var blockMessageView: TextView? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -81,46 +91,75 @@ class OverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun showTimer(appName: String, totalSeconds: Int, remainingSeconds: Int) {
-        removeView(timerView)
+        ensureTimerView()
+        timerTitleView?.text = "$appName  ${formatSeconds(remainingSeconds)} left"
+        timerProgressView?.max = totalSeconds.coerceAtLeast(1)
+        timerProgressView?.progress = remainingSeconds.coerceAtLeast(0)
+        timerView?.visibility = View.VISIBLE
+
+        warningView?.visibility = View.GONE
+        if (blockView?.visibility == View.VISIBLE) {
+            timerView?.visibility = View.GONE
+        }
+    }
+
+    private fun showWarning(title: String, message: String) {
+        ensureWarningView()
+        warningTitleView?.text = title
+        warningMessageView?.text = message
+        warningView?.visibility = View.VISIBLE
+    }
+
+    private fun showBlock(appName: String, cooldownSeconds: Int) {
+        ensureBlockView()
+        blockTitleView?.text = "Time's up. Take a break."
+        blockMessageView?.text = "$appName is blocked for ${formatSeconds(cooldownSeconds)}"
+        blockView?.visibility = View.VISIBLE
+        timerView?.visibility = View.GONE
+        warningView?.visibility = View.GONE
+    }
+
+    private fun ensureTimerView() {
+        if (timerView != null) return
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xDD203A43.toInt())
             setPadding(32, 24, 32, 24)
         }
         val title = TextView(this).apply {
-            text = "$appName  ${formatSeconds(remainingSeconds)} left"
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 16f
         }
-        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = totalSeconds.coerceAtLeast(1)
-            progress = remainingSeconds.coerceAtLeast(0)
-        }
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
         container.addView(title)
         container.addView(progress)
+
         timerView = container
+        timerTitleView = title
+        timerProgressView = progress
         addView(container, topParams())
     }
 
-    private fun showWarning(title: String, message: String) {
-        removeView(blockView)
+    private fun ensureWarningView() {
+        if (warningView != null) return
+
         val root = FrameLayout(this).apply {
             setBackgroundColor(0x66B54708.toInt())
+            visibility = View.GONE
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFFFFFFFF.toInt())
             setPadding(48, 48, 48, 48)
         }
-        content.addView(TextView(this).apply {
-            text = title
+        val title = TextView(this).apply {
             textSize = 20f
-        })
-        content.addView(TextView(this).apply {
-            text = message
+        }
+        val message = TextView(this).apply {
             textSize = 16f
             setPadding(0, 16, 0, 24)
-        })
+        }
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
@@ -130,7 +169,7 @@ class OverlayService : Service() {
             setOnClickListener {
                 val sessionManager = (application as ScrollGuardApp).container.sessionManager
                 sessionManager.extendCurrentSession(10)
-                hideAll()
+                warningView?.visibility = View.GONE
             }
         })
         buttonRow.addView(Button(this).apply {
@@ -142,9 +181,11 @@ class OverlayService : Service() {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     },
                 )
-                hideAll()
+                warningView?.visibility = View.GONE
             }
         })
+        content.addView(title)
+        content.addView(message)
         content.addView(buttonRow)
         root.addView(
             content,
@@ -154,29 +195,34 @@ class OverlayService : Service() {
                 Gravity.CENTER,
             ),
         )
-        blockView = root
+
+        warningView = root
+        warningTitleView = title
+        warningMessageView = message
         addView(root, interactiveParams())
     }
 
-    private fun showBlock(appName: String, cooldownSeconds: Int) {
-        removeView(blockView)
+    private fun ensureBlockView() {
+        if (blockView != null) return
+
         val root = FrameLayout(this).apply {
             setBackgroundColor(0xEE101828.toInt())
+            visibility = View.GONE
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
         }
-        content.addView(TextView(this).apply {
-            text = "Time's up. Take a break."
+        val title = TextView(this).apply {
             textSize = 26f
             setTextColor(0xFFFFFFFF.toInt())
-        })
-        content.addView(TextView(this).apply {
-            text = "$appName is blocked for ${formatSeconds(cooldownSeconds)}"
+        }
+        val message = TextView(this).apply {
             textSize = 18f
             setTextColor(0xFFE5E7EB.toInt())
-        })
+        }
+        content.addView(title)
+        content.addView(message)
         root.addView(
             content,
             FrameLayout.LayoutParams(
@@ -185,7 +231,10 @@ class OverlayService : Service() {
                 Gravity.CENTER,
             ),
         )
+
         blockView = root
+        blockTitleView = title
+        blockMessageView = message
         addView(root, fullScreenParams())
     }
 
@@ -197,14 +246,22 @@ class OverlayService : Service() {
 
     private fun hideAll() {
         removeView(timerView)
+        removeView(warningView)
         removeView(blockView)
         timerView = null
+        timerTitleView = null
+        timerProgressView = null
+        warningView = null
+        warningTitleView = null
+        warningMessageView = null
         blockView = null
+        blockTitleView = null
+        blockMessageView = null
     }
 
     private fun removeView(view: View?) {
         if (view != null && view.parent != null) {
-            windowManager.removeView(view)
+            windowManager.removeViewImmediate(view)
         }
     }
 
@@ -213,7 +270,9 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP

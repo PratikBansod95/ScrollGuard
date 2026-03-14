@@ -122,6 +122,8 @@ data class MainUiState(
     val stats: DashboardStats = DashboardStats(),
     val installedApps: List<InstalledApp> = emptyList(),
     val monitoringActive: Boolean = false,
+    val defaultSessionSeconds: Int = 60,
+    val defaultCooldownSeconds: Int = 300,
 )
 
 class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
@@ -133,7 +135,11 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
-        _uiState.value = _uiState.value.copy(monitoringActive = prefs.getBoolean(KEY_MONITORING_ACTIVE, false))
+        _uiState.value = _uiState.value.copy(
+            monitoringActive = prefs.getBoolean(KEY_MONITORING_ACTIVE, false),
+            defaultSessionSeconds = prefs.getInt(KEY_DEFAULT_SESSION_SECONDS, 60),
+            defaultCooldownSeconds = prefs.getInt(KEY_DEFAULT_COOLDOWN_SECONDS, 300),
+        )
         viewModelScope.launch {
             repository.observeLimits().collect { limits ->
                 _uiState.value = _uiState.value.copy(limits = limits)
@@ -172,6 +178,17 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
         }
     }
 
+    fun updateDefaultPreset(sessionSeconds: Int, cooldownSeconds: Int) {
+        prefs.edit()
+            .putInt(KEY_DEFAULT_SESSION_SECONDS, sessionSeconds)
+            .putInt(KEY_DEFAULT_COOLDOWN_SECONDS, cooldownSeconds)
+            .apply()
+        _uiState.value = _uiState.value.copy(
+            defaultSessionSeconds = sessionSeconds,
+            defaultCooldownSeconds = cooldownSeconds,
+        )
+    }
+
     fun startMonitoring(context: Context) {
         ContextCompat.startForegroundService(context, Intent(context, AppMonitorService::class.java))
         prefs.edit().putBoolean(KEY_MONITORING_ACTIVE, true).apply()
@@ -180,6 +197,8 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
 
     companion object {
         private const val KEY_MONITORING_ACTIVE = "monitoring_active"
+        private const val KEY_DEFAULT_SESSION_SECONDS = "default_session_seconds"
+        private const val KEY_DEFAULT_COOLDOWN_SECONDS = "default_cooldown_seconds"
 
         fun factory(app: ScrollGuardApp): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
@@ -273,6 +292,9 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     installedApps = uiState.installedApps,
                     currentLimits = uiState.limits.associateBy { it.packageName },
                     monitoredCount = uiState.limits.size,
+                    defaultSessionSeconds = uiState.defaultSessionSeconds,
+                    defaultCooldownSeconds = uiState.defaultCooldownSeconds,
+                    onUpdateDefaultPreset = viewModel::updateDefaultPreset,
                     onSaveLimit = viewModel::saveLimit,
                     onRemoveLimit = viewModel::removeLimit,
                 )
@@ -570,6 +592,9 @@ fun AppSelectionScreen(
     installedApps: List<InstalledApp>,
     currentLimits: Map<String, AppLimitEntity>,
     monitoredCount: Int,
+    defaultSessionSeconds: Int,
+    defaultCooldownSeconds: Int,
+    onUpdateDefaultPreset: (Int, Int) -> Unit,
     onSaveLimit: (InstalledApp, Int, Int) -> Unit,
     onRemoveLimit: (String) -> Unit,
 ) {
@@ -577,6 +602,8 @@ fun AppSelectionScreen(
     val cooldownInputs = remember { mutableStateMapOf<String, String>() }
     var searchQuery by remember { mutableStateOf("") }
     var showOnlyActive by remember { mutableStateOf(false) }
+    var selectedDefaultSession by remember(defaultSessionSeconds) { mutableStateOf(defaultSessionSeconds) }
+    var selectedDefaultCooldown by remember(defaultCooldownSeconds) { mutableStateOf(defaultCooldownSeconds) }
 
     val filteredApps = installedApps.filter { app ->
         val matchesQuery = searchQuery.isBlank() || app.appName.contains(searchQuery, ignoreCase = true)
@@ -591,10 +618,30 @@ fun AppSelectionScreen(
     ) {
         item {
             Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF5F6))) {
-                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Choose the apps to limit", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text("Keep sessions short and cooldowns meaningful. A good starting point is 60 seconds in-app and 5 minutes away.")
                     Text("$monitoredCount apps currently protected", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    PresetSection(
+                        title = "Default session preset",
+                        values = listOf(45, 60, 120),
+                        formatter = { "${it}s" },
+                        selectedValue = selectedDefaultSession,
+                        onSelect = { selectedDefaultSession = it },
+                    )
+                    PresetSection(
+                        title = "Default cooldown preset",
+                        values = listOf(300, 600, 900),
+                        formatter = { formatPresetDuration(it) },
+                        selectedValue = selectedDefaultCooldown,
+                        onSelect = { selectedDefaultCooldown = it },
+                    )
+                    Button(
+                        onClick = { onUpdateDefaultPreset(selectedDefaultSession, selectedDefaultCooldown) },
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        Text("Save default pair")
+                    }
                 }
             }
         }
@@ -675,15 +722,26 @@ fun AppSelectionScreen(
                             title = "Quick session presets",
                             values = listOf(45, 60, 120),
                             formatter = { "${it}s" },
+                            selectedValue = timeInputs[app.packageName]?.toIntOrNull(),
                             onSelect = { timeInputs[app.packageName] = it.toString() },
                         )
                         PresetSection(
                             title = "Quick cooldown presets",
                             values = listOf(300, 600, 900),
                             formatter = { formatPresetDuration(it) },
+                            selectedValue = cooldownInputs[app.packageName]?.toIntOrNull(),
                             onSelect = { cooldownInputs[app.packageName] = it.toString() },
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    timeInputs[app.packageName] = defaultSessionSeconds.toString()
+                                    cooldownInputs[app.packageName] = defaultCooldownSeconds.toString()
+                                },
+                                shape = RoundedCornerShape(18.dp),
+                            ) {
+                                Text("Use defaults")
+                            }
                             Button(
                                 onClick = {
                                     onSaveLimit(
@@ -854,6 +912,7 @@ private fun PresetSection(
     title: String,
     values: List<Int>,
     formatter: (Int) -> String,
+    selectedValue: Int?,
     onSelect: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -861,7 +920,7 @@ private fun PresetSection(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             values.forEach { value ->
                 FilterChip(
-                    selected = false,
+                    selected = selectedValue == value,
                     onClick = { onSelect(value) },
                     label = { Text(formatter(value)) },
                 )
@@ -877,3 +936,12 @@ private fun formatPresetDuration(seconds: Int): String {
         "${seconds}s"
     }
 }
+
+
+
+
+
+
+
+
+

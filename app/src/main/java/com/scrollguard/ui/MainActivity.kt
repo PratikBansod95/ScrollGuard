@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Security
@@ -600,16 +603,19 @@ fun AppSelectionScreen(
 ) {
     val timeInputs = remember { mutableStateMapOf<String, String>() }
     val cooldownInputs = remember { mutableStateMapOf<String, String>() }
+    val expandedCards = remember { mutableStateMapOf<String, Boolean>() }
     var searchQuery by remember { mutableStateOf("") }
     var showOnlyActive by remember { mutableStateOf(false) }
     var selectedDefaultSession by remember(defaultSessionSeconds) { mutableStateOf(defaultSessionSeconds) }
     var selectedDefaultCooldown by remember(defaultCooldownSeconds) { mutableStateOf(defaultCooldownSeconds) }
 
-    val filteredApps = installedApps.filter { app ->
-        val matchesQuery = searchQuery.isBlank() || app.appName.contains(searchQuery, ignoreCase = true)
-        val matchesFilter = !showOnlyActive || currentLimits.containsKey(app.packageName)
-        matchesQuery && matchesFilter
-    }
+    val filteredApps = installedApps
+        .filter { app ->
+            val matchesQuery = searchQuery.isBlank() || app.appName.contains(searchQuery, ignoreCase = true)
+            val matchesFilter = !showOnlyActive || currentLimits.containsKey(app.packageName)
+            matchesQuery && matchesFilter
+        }
+        .sortedWith(compareByDescending<InstalledApp> { currentLimits.containsKey(it.packageName) }.thenBy { it.appName.lowercase() })
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -686,77 +692,95 @@ fun AppSelectionScreen(
                     cooldownInputs[app.packageName] = existing?.cooldownSeconds?.toString() ?: "300"
                 }
 
+                val isExpanded = expandedCards[app.packageName] ?: false
                 Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { expandedCards[app.packageName] = !isExpanded },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
                             AppIcon(app = app)
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(app.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    if (existing == null) "Not monitored yet" else "Currently limited",
+                                    if (existing == null) {
+                                        "Not monitored yet"
+                                    } else {
+                                        "${timeInputs[app.packageName]}s session • ${formatPresetDuration(cooldownInputs[app.packageName]?.toIntOrNull() ?: 300)} cooldown"
+                                    },
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                             }
                             StatusPill(active = existing != null)
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedTextField(
-                                value = timeInputs[app.packageName].orEmpty(),
-                                onValueChange = { timeInputs[app.packageName] = it.filter(Char::isDigit) },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("Session sec") },
-                                singleLine = true,
-                                shape = RoundedCornerShape(18.dp),
-                            )
-                            OutlinedTextField(
-                                value = cooldownInputs[app.packageName].orEmpty(),
-                                onValueChange = { cooldownInputs[app.packageName] = it.filter(Char::isDigit) },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("Cooldown sec") },
-                                singleLine = true,
-                                shape = RoundedCornerShape(18.dp),
+                            Icon(
+                                imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        PresetSection(
-                            title = "Quick session presets",
-                            values = listOf(45, 60, 120),
-                            formatter = { "${it}s" },
-                            selectedValue = timeInputs[app.packageName]?.toIntOrNull(),
-                            onSelect = { timeInputs[app.packageName] = it.toString() },
-                        )
-                        PresetSection(
-                            title = "Quick cooldown presets",
-                            values = listOf(300, 600, 900),
-                            formatter = { formatPresetDuration(it) },
-                            selectedValue = cooldownInputs[app.packageName]?.toIntOrNull(),
-                            onSelect = { cooldownInputs[app.packageName] = it.toString() },
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    timeInputs[app.packageName] = defaultSessionSeconds.toString()
-                                    cooldownInputs[app.packageName] = defaultCooldownSeconds.toString()
-                                },
-                                shape = RoundedCornerShape(18.dp),
-                            ) {
-                                Text("Use defaults")
+                        if (isExpanded) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                OutlinedTextField(
+                                    value = timeInputs[app.packageName].orEmpty(),
+                                    onValueChange = { timeInputs[app.packageName] = it.filter(Char::isDigit) },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("Session sec") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(18.dp),
+                                )
+                                OutlinedTextField(
+                                    value = cooldownInputs[app.packageName].orEmpty(),
+                                    onValueChange = { cooldownInputs[app.packageName] = it.filter(Char::isDigit) },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("Cooldown sec") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(18.dp),
+                                )
                             }
-                            Button(
-                                onClick = {
-                                    onSaveLimit(
-                                        app,
-                                        timeInputs[app.packageName]?.toIntOrNull() ?: 60,
-                                        cooldownInputs[app.packageName]?.toIntOrNull() ?: 300,
-                                    )
-                                },
-                                shape = RoundedCornerShape(18.dp),
-                            ) {
-                                Text(if (existing == null) "Save limit" else "Update limit")
-                            }
-                            if (existing != null) {
-                                OutlinedButton(onClick = { onRemoveLimit(app.packageName) }, shape = RoundedCornerShape(18.dp)) {
-                                    Text("Remove")
+                            PresetSection(
+                                title = "Quick session presets",
+                                values = listOf(45, 60, 120),
+                                formatter = { "${it}s" },
+                                selectedValue = timeInputs[app.packageName]?.toIntOrNull(),
+                                onSelect = { timeInputs[app.packageName] = it.toString() },
+                            )
+                            PresetSection(
+                                title = "Quick cooldown presets",
+                                values = listOf(300, 600, 900),
+                                formatter = { formatPresetDuration(it) },
+                                selectedValue = cooldownInputs[app.packageName]?.toIntOrNull(),
+                                onSelect = { cooldownInputs[app.packageName] = it.toString() },
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        timeInputs[app.packageName] = defaultSessionSeconds.toString()
+                                        cooldownInputs[app.packageName] = defaultCooldownSeconds.toString()
+                                    },
+                                    shape = RoundedCornerShape(18.dp),
+                                ) {
+                                    Text("Use defaults")
+                                }
+                                Button(
+                                    onClick = {
+                                        onSaveLimit(
+                                            app,
+                                            timeInputs[app.packageName]?.toIntOrNull() ?: 60,
+                                            cooldownInputs[app.packageName]?.toIntOrNull() ?: 300,
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(18.dp),
+                                ) {
+                                    Text(if (existing == null) "Save limit" else "Update limit")
+                                }
+                                if (existing != null) {
+                                    OutlinedButton(onClick = { onRemoveLimit(app.packageName) }, shape = RoundedCornerShape(18.dp)) {
+                                        Text("Remove")
+                                    }
                                 }
                             }
                         }
@@ -936,6 +960,10 @@ private fun formatPresetDuration(seconds: Int): String {
         "${seconds}s"
     }
 }
+
+
+
+
 
 
 

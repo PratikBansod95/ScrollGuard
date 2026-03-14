@@ -12,12 +12,14 @@ import android.os.IBinder
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.scrollguard.R
+import com.scrollguard.ScrollGuardApp
 
 sealed class OverlayCommand {
     data class ShowTimer(
@@ -80,7 +82,6 @@ class OverlayService : Service() {
 
     private fun showTimer(appName: String, totalSeconds: Int, remainingSeconds: Int) {
         removeView(timerView)
-        removeView(blockView)
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xDD203A43.toInt())
@@ -118,7 +119,33 @@ class OverlayService : Service() {
         content.addView(TextView(this).apply {
             text = message
             textSize = 16f
+            setPadding(0, 16, 0, 24)
         })
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        buttonRow.addView(Button(this).apply {
+            text = "Continue 10s"
+            setOnClickListener {
+                val sessionManager = (application as ScrollGuardApp).container.sessionManager
+                sessionManager.extendCurrentSession(10)
+                hideAll()
+            }
+        })
+        buttonRow.addView(Button(this).apply {
+            text = "Close app"
+            setOnClickListener {
+                startActivity(
+                    Intent(Intent.ACTION_MAIN).apply {
+                        addCategory(Intent.CATEGORY_HOME)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    },
+                )
+                hideAll()
+            }
+        })
+        content.addView(buttonRow)
         root.addView(
             content,
             FrameLayout.LayoutParams(
@@ -128,7 +155,7 @@ class OverlayService : Service() {
             ),
         )
         blockView = root
-        addView(root, centeredParams())
+        addView(root, interactiveParams())
     }
 
     private fun showBlock(appName: String, cooldownSeconds: Int) {
@@ -193,12 +220,12 @@ class OverlayService : Service() {
         }
     }
 
-    private fun centeredParams(): WindowManager.LayoutParams {
+    private fun interactiveParams(): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.CENTER

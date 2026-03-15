@@ -45,6 +45,9 @@ class SessionManager(
     private var lastWarningAt = 0L
     private var warningsThisSession = 0
 
+    private var doomScrollPackageName: String? = null
+    private var doomScrollSessionStartMillis = 0L
+
     init {
         activePackageName = prefs.getString(KEY_ACTIVE_PACKAGE, null)
         sessionStartMillis = prefs.getLong(KEY_SESSION_START_MILLIS, 0L)
@@ -157,7 +160,30 @@ class SessionManager(
             ),
         )
     }
+    fun recordDoomScrollDetection() {
+        incrementDoomScrollDetections()
+    }
 
+    fun startSession(packageName: String) {
+        if (doomScrollPackageName != packageName) {
+            doomScrollPackageName = packageName
+            doomScrollSessionStartMillis = System.currentTimeMillis()
+        }
+    }
+
+    fun endSession() {
+        doomScrollPackageName = null
+        doomScrollSessionStartMillis = 0L
+    }
+
+    fun getSessionDurationSeconds(): Long {
+        if (doomScrollSessionStartMillis == 0L) {
+            return 0L
+        }
+        return (System.currentTimeMillis() - doomScrollSessionStartMillis) / 1000L
+    }
+
+    fun getActiveSessionPackage(): String? = doomScrollPackageName
     fun extendCurrentSession(extraSeconds: Int) {
         val session = _activeSession.value ?: return
         sessionStartMillis += extraSeconds * 1_000L
@@ -315,3 +341,8 @@ class SessionManager(
         private const val WARNING_COOLDOWN_MS = 25_000L
     }
 }
+
+
+
+
+

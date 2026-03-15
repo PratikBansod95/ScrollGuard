@@ -77,7 +77,8 @@ class AppMonitorService : Service() {
             lastForegroundPackage = resumedPackage
             lastForegroundDetectedAt = end
         }
-        return if (end - lastForegroundDetectedAt <= STALE_FOREGROUND_TIMEOUT_MS) {
+        val timeSinceLast = end - lastForegroundDetectedAt
+        return if (!lastForegroundPackage.isNullOrBlank() && timeSinceLast <= ABSOLUTE_FOREGROUND_TIMEOUT_MS) {
             lastForegroundPackage
         } else {
             null
@@ -97,7 +98,7 @@ class AppMonitorService : Service() {
             manager.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "ScrollGuard monitoring",
+                    "SnapOut monitoring",
                     NotificationManager.IMPORTANCE_LOW,
                 ),
             )
@@ -107,7 +108,7 @@ class AppMonitorService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("ScrollGuard is monitoring apps")
+            .setContentTitle("SnapOut is monitoring apps")
             .setContentText("Watching monitored apps and session timers.")
             .setOngoing(true)
             .build()
@@ -120,6 +121,13 @@ class AppMonitorService : Service() {
 
         private const val CHANNEL_ID = "monitor_channel"
         private const val NOTIFICATION_ID = 2001
-        private const val STALE_FOREGROUND_TIMEOUT_MS = 3_500L
+        private const val ABSOLUTE_FOREGROUND_TIMEOUT_MS = 600_000L
     }
 }
+
+
+
+
+
+
+

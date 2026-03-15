@@ -53,6 +53,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -93,14 +94,11 @@ import com.scrollguard.logic.DashboardStats
 import com.scrollguard.services.AppMonitorService
 import com.scrollguard.ui.theme.Amber
 import com.scrollguard.ui.theme.Coral
-import com.scrollguard.ui.theme.Cream
 import com.scrollguard.ui.theme.DeepSea
-import com.scrollguard.ui.theme.Ink
-import com.scrollguard.ui.theme.Mist
 import com.scrollguard.ui.theme.Moss
 import com.scrollguard.ui.theme.Reef
-import com.scrollguard.ui.theme.Sand
 import com.scrollguard.ui.theme.ScrollGuardTheme
+import com.scrollguard.utils.AppSettings
 import com.scrollguard.utils.AppUtils
 import com.scrollguard.utils.InstalledApp
 import com.scrollguard.utils.PermissionUtils
@@ -132,6 +130,7 @@ data class MainUiState(
     val hasUsageAccess: Boolean = false,
     val hasOverlayAccess: Boolean = false,
     val hasAccessibilityAccess: Boolean = false,
+    val doomScrollEnabled: Boolean = true,
     val defaultSessionSeconds: Int = 60,
     val defaultCooldownSeconds: Int = 300,
 )
@@ -146,6 +145,7 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
 
     init {
         _uiState.value = _uiState.value.copy(
+            doomScrollEnabled = AppSettings.isDoomScrollEnabled(app),
             defaultSessionSeconds = prefs.getInt(KEY_DEFAULT_SESSION_SECONDS, 60),
             defaultCooldownSeconds = prefs.getInt(KEY_DEFAULT_COOLDOWN_SECONDS, 300),
         )
@@ -197,6 +197,11 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
             defaultSessionSeconds = sessionSeconds,
             defaultCooldownSeconds = cooldownSeconds,
         )
+    }
+
+    fun setDoomScrollEnabled(enabled: Boolean) {
+        AppSettings.setDoomScrollEnabled(app, enabled)
+        _uiState.value = _uiState.value.copy(doomScrollEnabled = enabled)
     }
 
     fun startMonitoring(context: Context) {
@@ -279,18 +284,18 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                             Icon(Icons.Rounded.Security, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                         }
                         Column {
-                            Text("ScrollGuard", style = MaterialTheme.typography.titleLarge)
+                            Text("SnapOut", style = MaterialTheme.typography.titleLarge)
                             Text("Calmer limits for endless feeds", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 },
             )
         },
-        containerColor = Sand,
+        containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             NavigationBar(
                 modifier = Modifier.navigationBarsPadding(),
-                containerColor = Cream,
+                containerColor = MaterialTheme.colorScheme.surface,
             ) {
                 destinations.forEach { destination ->
                     NavigationBarItem(
@@ -321,6 +326,7 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     hasUsageAccess = uiState.hasUsageAccess,
                     hasOverlay = uiState.hasOverlayAccess,
                     hasAccessibility = uiState.hasAccessibilityAccess,
+                    doomScrollEnabled = uiState.doomScrollEnabled,
                     monitoredCount = uiState.limits.size,
                     stats = uiState.stats,
                     monitoringActive = uiState.monitoringActive,
@@ -328,6 +334,7 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     onOpenOverlayAccess = { context.startActivity(PermissionUtils.overlayIntent(context)) },
                     onOpenAccessibility = { context.startActivity(PermissionUtils.accessibilityIntent()) },
                     onStartMonitoring = { viewModel.startMonitoring(context) },
+                    onToggleDoomScroll = viewModel::setDoomScrollEnabled,
                 )
             }
             composable("limits") {
@@ -354,6 +361,7 @@ private fun HomeScreen(
     hasUsageAccess: Boolean,
     hasOverlay: Boolean,
     hasAccessibility: Boolean,
+    doomScrollEnabled: Boolean,
     monitoredCount: Int,
     stats: DashboardStats,
     monitoringActive: Boolean,
@@ -361,6 +369,7 @@ private fun HomeScreen(
     onOpenOverlayAccess: () -> Unit,
     onOpenAccessibility: () -> Unit,
     onStartMonitoring: () -> Unit,
+    onToggleDoomScroll: (Boolean) -> Unit,
 ) {
     val completedSteps = listOf(hasUsageAccess, hasOverlay, hasAccessibility).count { it }
     val allReady = completedSteps == 3
@@ -392,6 +401,12 @@ private fun HomeScreen(
                 onOpenUsageAccess = onOpenUsageAccess,
                 onOpenOverlayAccess = onOpenOverlayAccess,
                 onOpenAccessibility = onOpenAccessibility,
+            )
+        }
+        item {
+            DoomScrollToggleCard(
+                enabled = doomScrollEnabled,
+                onToggle = onToggleDoomScroll,
             )
         }
         item {
@@ -433,7 +448,7 @@ private fun FocusHeroCard(
                     }
                 }
                 Text(
-                    if (allReady) "Everything is ready. Start a calmer phone session." else "Set up ScrollGuard in three quick steps.",
+                    if (allReady) "Everything is ready. Start a calmer phone session." else "Set up SnapOut in three quick steps.",
                     style = MaterialTheme.typography.headlineLarge,
                     color = Color.White,
                 )
@@ -441,7 +456,7 @@ private fun FocusHeroCard(
                     if (allReady) {
                         "Your chosen apps will get a live timer, doom-scroll warning, and cooldown wall when the session ends."
                     } else {
-                        "Enable permissions once, choose the apps to watch, and ScrollGuard will take care of the rest in the background."
+                        "Enable permissions once, choose the apps to watch, and SnapOut will take care of the rest in the background."
                     },
                     color = Color(0xFFF7EFE0),
                     style = MaterialTheme.typography.bodyLarge,
@@ -480,7 +495,7 @@ private fun FocusHeroCard(
 
 @Composable
 private fun MonitoringStatusCard(monitoringActive: Boolean, monitoredCount: Int) {
-    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(
             modifier = Modifier.padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -537,12 +552,12 @@ private fun QuickStatsStrip(stats: DashboardStats, monitoredCount: Int) {
 
 @Composable
 private fun QuickStatCard(title: String, value: String, icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+    Card(modifier = modifier, shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Surface(color = tint.copy(alpha = 0.14f), shape = CircleShape) {
                 Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.padding(10.dp))
             }
-            Text(value, style = MaterialTheme.typography.headlineMedium, color = Ink)
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurface)
             Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -557,10 +572,10 @@ private fun SetupChecklistCard(
     onOpenOverlayAccess: () -> Unit,
     onOpenAccessibility: () -> Unit,
 ) {
-    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Setup checklist", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("Turn on these permissions once so ScrollGuard can watch the foreground app, show overlays, and detect repeated scrolling.")
+            Text("Turn on these permissions once so SnapOut can watch the foreground app, show overlays, and detect repeated scrolling.")
             PermissionStepRow("Usage access", "Detect which app is currently on screen.", hasUsageAccess, onOpenUsageAccess)
             PermissionStepRow("Overlay permission", "Show the timer bar, warning modal, and cooldown wall.", hasOverlay, onOpenOverlayAccess)
             PermissionStepRow("Accessibility service", "Watch heavy scrolling patterns inside feeds.", hasAccessibility, onOpenAccessibility)
@@ -603,7 +618,30 @@ private fun PermissionStepRow(title: String, subtitle: String, granted: Boolean,
         }
     }
 }
-
+@Composable
+private fun DoomScrollToggleCard(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Doom scroll detection", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Toggle detection for tracked apps like Instagram, Reddit, and YouTube.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(if (enabled) "Enabled" else "Disabled", style = MaterialTheme.typography.labelLarge)
+                Switch(checked = enabled, onCheckedChange = onToggle)
+            }
+        }
+    }
+}
 @Composable
 private fun HowItWorksCard() {
     Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF2DA))) {
@@ -612,7 +650,7 @@ private fun HowItWorksCard() {
             TimelineRow("Pick the apps you tend to lose time in.")
             TimelineRow("Set a short session and a cooldown in the Limits tab.")
             TimelineRow("Start protection once the setup checklist is complete.")
-            TimelineRow("ScrollGuard warns you when scrolling gets intense and blocks the app when time is up.")
+            TimelineRow("SnapOut warns you when scrolling gets intense and blocks the app when time is up.")
         }
     }
 }
@@ -670,7 +708,7 @@ fun AppSelectionScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF5F6))) {
+            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Choose the apps to limit", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text("Start with the apps that usually pull you into feeds. Suggested apps are surfaced first, and presets keep setup fast.")
@@ -741,10 +779,10 @@ fun AppSelectionScreen(
             items(filteredApps, key = { it.packageName }) { app ->
                 val existing = currentLimits[app.packageName]
                 if (!timeInputs.containsKey(app.packageName)) {
-                    timeInputs[app.packageName] = existing?.timeLimitSeconds?.toString() ?: "60"
+                    timeInputs[app.packageName] = existing?.timeLimitSeconds?.toString() ?: defaultSessionSeconds.toString()
                 }
                 if (!cooldownInputs.containsKey(app.packageName)) {
-                    cooldownInputs[app.packageName] = existing?.cooldownSeconds?.toString() ?: "300"
+                    cooldownInputs[app.packageName] = existing?.cooldownSeconds?.toString() ?: defaultCooldownSeconds.toString()
                 }
 
                 val isExpanded = expandedCards[app.packageName] ?: false
@@ -754,7 +792,7 @@ fun AppSelectionScreen(
                 val cooldownError = cooldownValidationError(cooldownValue)
                 val canSave = sessionError == null && cooldownError == null
 
-                Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+                Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         Row(
                             modifier = Modifier
@@ -770,7 +808,7 @@ fun AppSelectionScreen(
                                     if (existing == null) {
                                         if (app.isSuggested) "Suggested for protection" else "Not monitored yet"
                                     } else {
-                                        "${formatDuration(sessionValue ?: 60)} session • ${formatDuration(cooldownValue ?: 300)} cooldown"
+                                        "${formatDuration(sessionValue ?: defaultSessionSeconds)} session - ${formatDuration(cooldownValue ?: defaultCooldownSeconds)} cooldown"
                                     },
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium,
@@ -842,8 +880,8 @@ fun AppSelectionScreen(
                                     onClick = {
                                         onSaveLimit(
                                             app,
-                                            sessionValue ?: 60,
-                                            cooldownValue ?: 300,
+                                            sessionValue ?: defaultSessionSeconds,
+                                            cooldownValue ?: defaultCooldownSeconds,
                                         )
                                     },
                                     shape = RoundedCornerShape(18.dp),
@@ -867,7 +905,7 @@ fun AppSelectionScreen(
 
 @Composable
 private fun EmptyStateCard(title: String, body: String) {
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -877,9 +915,9 @@ private fun EmptyStateCard(title: String, body: String) {
 
 @Composable
 private fun StatusHint(title: String, body: String) {
-    Surface(shape = RoundedCornerShape(18.dp), color = Mist) {
+    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.labelLarge, color = Ink)
+            Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
             Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -887,7 +925,7 @@ private fun StatusHint(title: String, body: String) {
 
 @Composable
 private fun StatusPill(active: Boolean) {
-    Surface(shape = RoundedCornerShape(999.dp), color = if (active) Moss.copy(alpha = 0.14f) else Mist) {
+    Surface(shape = RoundedCornerShape(999.dp), color = if (active) Moss.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant) {
         Text(
             if (active) "Active" else "Idle",
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -899,7 +937,7 @@ private fun StatusPill(active: Boolean) {
 
 @Composable
 private fun AppIcon(app: InstalledApp) {
-    Surface(shape = RoundedCornerShape(20.dp), color = Mist) {
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
         AndroidView(
             modifier = Modifier.height(56.dp),
             factory = { context ->
@@ -930,7 +968,7 @@ fun DashboardScreen(stats: DashboardStats, monitoredCount: Int) {
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Your progress today", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-                        Text("A quick pulse on how often ScrollGuard had to step in.", color = Color(0xFFE8EEF1))
+                        Text("A quick pulse on how often SnapOut had to step in.", color = Color(0xFFE8EEF1))
                     }
                 }
             }
@@ -954,7 +992,7 @@ fun DashboardScreen(stats: DashboardStats, monitoredCount: Int) {
             DashboardWideCard(
                 title = "Monitored apps",
                 value = monitoredCount.toString(),
-                subtitle = "Apps currently covered by ScrollGuard limits.",
+                subtitle = "Apps currently covered by SnapOut limits.",
                 icon = Icons.Rounded.Shield,
                 tint = Moss,
             )
@@ -964,7 +1002,7 @@ fun DashboardScreen(stats: DashboardStats, monitoredCount: Int) {
 
 @Composable
 private fun DashboardHighlightCard(title: String, value: String, icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+    Card(modifier = modifier, shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Surface(color = tint.copy(alpha = 0.14f), shape = CircleShape) {
                 Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.padding(10.dp))
@@ -977,7 +1015,7 @@ private fun DashboardHighlightCard(title: String, value: String, icon: ImageVect
 
 @Composable
 private fun DashboardWideCard(title: String, value: String, subtitle: String, icon: ImageVector, tint: Color) {
-    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Cream)) {
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(
             modifier = Modifier.padding(18.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -1072,6 +1110,36 @@ private fun cooldownValidationError(value: Int?): String? {
         else -> null
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

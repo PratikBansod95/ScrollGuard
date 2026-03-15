@@ -1,4 +1,5 @@
 <resources>
-    <string name="app_name">ScrollGuard</string>
-    <string name="accessibility_service_label">ScrollGuard scroll detection</string>
+    <string name="app_name">SnapOut</string>
+    <string name="accessibility_service_label">SnapOut scroll detection</string>
 </resources>
+

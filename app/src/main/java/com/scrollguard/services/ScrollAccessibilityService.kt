@@ -1,41 +1,83 @@
 package com.scrollguard.services
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import com.scrollguard.ScrollGuardApp
-import com.scrollguard.logic.ScrollDetector
+import com.scrollguard.utils.AppSettings
 
-class ScrollAccessibilityService : AccessibilityService() {
-    private val scrollDetector = ScrollDetector()
-    private var lastPackageName: String? = null
-    private var lastAnalysisAt = 0L
+class ScrollAccessibilityService : AccessibilityService(), SharedPreferences.OnSharedPreferenceChangeListener {
+    private val trackedAppsRepository by lazy { (application as ScrollGuardApp).container.trackedAppsRepository }
+    private val scrollEventBuffer by lazy { (application as ScrollGuardApp).container.scrollEventBuffer }
+    private val doomScrollDetector by lazy { (application as ScrollGuardApp).container.doomScrollDetector }
+    private val interventionManager by lazy { (application as ScrollGuardApp).container.interventionManager }
+    private val sessionManager by lazy { (application as ScrollGuardApp).container.sessionManager }
+
+    private lateinit var prefs: SharedPreferences
+    private var doomScrollEnabled = true
+    private var activePackageName: String? = null
+    private var lastScrollEventAt = 0L
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        prefs = getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE)
+        doomScrollEnabled = prefs.getBoolean(AppSettings.KEY_DOOM_SCROLL_ENABLED, true)
+        prefs.registerOnSharedPreferenceChangeListener(this)
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) return
-        val packageName = event.packageName?.toString() ?: return
+        event ?: return
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> handleWindowChange(event)
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> handleScrollEvent(event)
+        }
+    }
 
-        if (packageName != lastPackageName) {
-            scrollDetector.reset()
-            lastPackageName = packageName
+    private fun handleWindowChange(event: AccessibilityEvent) {
+        val packageName = event.packageName?.toString() ?: return
+        if (packageName == activePackageName) return
+
+        activePackageName = packageName
+        if (trackedAppsRepository.isTrackedApp(packageName)) {
+            sessionManager.startSession(packageName)
+        } else {
+            sessionManager.endSession()
+        }
+        scrollEventBuffer.reset()
+    }
+
+    private fun handleScrollEvent(event: AccessibilityEvent) {
+        if (!doomScrollEnabled) return
+
+        val packageName = event.packageName?.toString() ?: return
+        if (!trackedAppsRepository.isTrackedApp(packageName)) return
+
+        if (sessionManager.getActiveSessionPackage() != packageName) {
+            sessionManager.startSession(packageName)
         }
 
-        val analysis = scrollDetector.recordScroll(event) ?: return
-        if (analysis.isDoomScroll) {
-            val now = System.currentTimeMillis()
-            if (now - lastAnalysisAt < MIN_DETECTION_GAP_MS) {
-                return
-            }
-            lastAnalysisAt = now
-            val sessionManager = (application as ScrollGuardApp).container.sessionManager
-            sessionManager.handleScrollThreshold(
+        val now = System.currentTimeMillis()
+        if (now - lastScrollEventAt < MIN_SCROLL_EVENT_INTERVAL_MS) {
+            return
+        }
+        lastScrollEventAt = now
+
+        scrollEventBuffer.addScrollEvent(now)
+        val scrollCount = scrollEventBuffer.getScrollCount()
+        val scrollRate = scrollEventBuffer.getScrollRate()
+        val sessionDurationSeconds = sessionManager.getSessionDurationSeconds()
+
+        if (doomScrollDetector.checkForDoomScroll(scrollCount, scrollRate, sessionDurationSeconds, packageName)) {
+            interventionManager.triggerIntervention(
                 packageName = packageName,
-                scrollCount = analysis.scrollCount,
-                averageIntervalMillis = analysis.averageIntervalMillis,
-                sustainedWindowMillis = analysis.windowMillis,
+                sessionDurationSeconds = sessionDurationSeconds,
+                scrollRate = scrollRate,
+                scrollCount = scrollCount,
             )
-            scrollDetector.reset()
+            scrollEventBuffer.reset()
         }
     }
 
@@ -44,13 +86,27 @@ class ScrollAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         Toast.makeText(
             this,
-            "ScrollGuard accessibility monitoring was turned off.",
+            "SnapOut accessibility monitoring was turned off.",
             Toast.LENGTH_LONG,
         ).show()
         return super.onUnbind(intent)
     }
 
+    override fun onDestroy() {
+        if (this::prefs.isInitialized) {
+            prefs.unregisterOnSharedPreferenceChangeListener(this)
+        }
+        super.onDestroy()
+    }
+
+    override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
+        if (key == AppSettings.KEY_DOOM_SCROLL_ENABLED) {
+            doomScrollEnabled = sharedPreferences.getBoolean(AppSettings.KEY_DOOM_SCROLL_ENABLED, true)
+        }
+    }
+
     companion object {
-        private const val MIN_DETECTION_GAP_MS = 12_000L
+        private const val MIN_SCROLL_EVENT_INTERVAL_MS = 100L
     }
 }
+

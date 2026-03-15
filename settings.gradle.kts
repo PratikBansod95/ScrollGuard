@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ScrollGuard"
+rootProject.name = "SnapOut"
 include(":app")
  

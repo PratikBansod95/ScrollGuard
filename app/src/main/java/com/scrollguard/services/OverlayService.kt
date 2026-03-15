@@ -593,7 +593,7 @@ class OverlayService : Service() {
             manager.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "ScrollGuard overlays",
+                    "SnapOut overlays",
                     NotificationManager.IMPORTANCE_LOW,
                 ),
             )
@@ -603,7 +603,7 @@ class OverlayService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("ScrollGuard overlay active")
+            .setContentTitle("SnapOut overlay active")
             .setContentText("Showing timer and block overlays when limits trigger.")
             .setOngoing(true)
             .build()
@@ -690,3 +690,4 @@ class OverlayService : Service() {
         }
     }
 }
+

@@ -73,7 +73,7 @@ class AppMonitorService : Service() {
                 resumedPackage = event.packageName
             }
         }
-        if (!resumedPackage.isNullOrBlank()) {
+        if (!resumedPackage.isNullOrBlank() && !IGNORED_FOREGROUND_PACKAGES.contains(resumedPackage)) {
             lastForegroundPackage = resumedPackage
             lastForegroundDetectedAt = end
         }
@@ -122,6 +122,15 @@ class AppMonitorService : Service() {
         private const val CHANNEL_ID = "monitor_channel"
         private const val NOTIFICATION_ID = 2001
         private const val ABSOLUTE_FOREGROUND_TIMEOUT_MS = 600_000L
+
+        private val IGNORED_FOREGROUND_PACKAGES = setOf(
+            "com.android.systemui",
+            "com.android.launcher",
+            "com.android.launcher3",
+            "com.google.android.apps.nexuslauncher",
+            "com.samsung.android.oneui.home",
+            "com.miui.home",
+        )
     }
 }
 

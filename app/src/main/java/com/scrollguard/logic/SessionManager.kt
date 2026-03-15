@@ -44,6 +44,7 @@ class SessionManager(
     private var sessionStartMillis = 0L
     private var lastWarningAt = 0L
     private var warningsThisSession = 0
+    private var lastTrackedSeenAt = 0L
 
     private var doomScrollPackageName: String? = null
     private var doomScrollSessionStartMillis = 0L
@@ -56,27 +57,25 @@ class SessionManager(
     }
 
     suspend fun onForegroundAppChanged(packageName: String?) {
+        val now = System.currentTimeMillis()
         if (packageName.isNullOrBlank()) {
-            if (activePackageName != null) {
-                clearSession()
-            }
+            handleBackground(now)
             return
         }
         if (packageName == context.packageName) {
-            if (activePackageName != null) {
-                clearSession()
-            }
+            handleBackground(now)
             return
         }
 
         val limit = repository.getLimit(packageName)
         if (limit == null) {
             if (activePackageName != null && activePackageName != packageName) {
-                clearSession()
+                handleBackground(now)
             }
             return
         }
 
+        lastTrackedSeenAt = now
         val cooldownRemaining = cooldownRemaining(limit)
         if (cooldownRemaining > 0) {
             showBlock(limit, cooldownRemaining)
@@ -86,13 +85,16 @@ class SessionManager(
 
         if (activePackageName != packageName) {
             activePackageName = packageName
-            sessionStartMillis = System.currentTimeMillis()
+            sessionStartMillis = now
             lastWarningAt = 0L
             warningsThisSession = 0
             persistSessionState()
+        } else if (sessionStartMillis == 0L) {
+            sessionStartMillis = now
+            persistSessionState()
         }
 
-        val elapsedSeconds = ((System.currentTimeMillis() - sessionStartMillis) / 1000L).toInt()
+        val elapsedSeconds = ((now - sessionStartMillis) / 1000L).toInt()
         val remainingSeconds = (limit.timeLimitSeconds - elapsedSeconds).coerceAtLeast(0)
 
         if (remainingSeconds == 0) {
@@ -198,9 +200,24 @@ class SessionManager(
         sessionStartMillis = 0L
         lastWarningAt = 0L
         warningsThisSession = 0
+        lastTrackedSeenAt = 0L
         _activeSession.value = null
         clearPersistedSessionState()
         dispatchOverlay(OverlayCommand.HideAll)
+    }
+
+    private fun handleBackground(now: Long) {
+        if (activePackageName == null) {
+            return
+        }
+        if (lastTrackedSeenAt == 0L) {
+            lastTrackedSeenAt = now
+        }
+        if (now - lastTrackedSeenAt > BACKGROUND_GRACE_MS) {
+            clearSession()
+        } else {
+            dispatchOverlay(OverlayCommand.HideAll)
+        }
     }
 
     private suspend fun startCooldown(limit: AppLimitEntity) {
@@ -339,6 +356,7 @@ class SessionManager(
         private const val KEY_SESSION_START_MILLIS = "session_start_millis"
         private const val MIN_SESSION_AGE_FOR_WARNING_MS = 10_000L
         private const val WARNING_COOLDOWN_MS = 25_000L
+        private const val BACKGROUND_GRACE_MS = 60_000L
     }
 }
 

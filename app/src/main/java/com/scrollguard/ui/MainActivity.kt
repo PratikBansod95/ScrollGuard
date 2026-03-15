@@ -141,6 +141,7 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
     private val repository = app.container.repository
     private val sessionManager = app.container.sessionManager
     private val prefs = app.getSharedPreferences("scrollguard_ui", Context.MODE_PRIVATE)
+    private var isStartingMonitoring = false
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
@@ -213,18 +214,37 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
     }
 
     fun startMonitoring(context: Context) {
+        if (isStartingMonitoring || PermissionUtils.isMonitoringActive(app)) {
+            return
+        }
+        isStartingMonitoring = true
+        AppSettings.setAutoStartEnabled(app, true)
         ContextCompat.startForegroundService(context, Intent(context, AppMonitorService::class.java))
         _uiState.value = _uiState.value.copy(monitoringActive = true)
         refreshRuntimeState()
+        isStartingMonitoring = false
     }
 
     fun refreshRuntimeState() {
+        val monitoringActive = PermissionUtils.isMonitoringActive(app)
+        val hasUsage = PermissionUtils.hasUsageAccess(app)
+        val hasOverlay = PermissionUtils.canDrawOverlays(app)
+        val hasAccessibility = PermissionUtils.isAccessibilityEnabled(app)
         _uiState.value = _uiState.value.copy(
-            monitoringActive = PermissionUtils.isMonitoringActive(app),
-            hasUsageAccess = PermissionUtils.hasUsageAccess(app),
-            hasOverlayAccess = PermissionUtils.canDrawOverlays(app),
-            hasAccessibilityAccess = PermissionUtils.isAccessibilityEnabled(app),
+            monitoringActive = monitoringActive,
+            hasUsageAccess = hasUsage,
+            hasOverlayAccess = hasOverlay,
+            hasAccessibilityAccess = hasAccessibility,
         )
+        if (!monitoringActive &&
+            !isStartingMonitoring &&
+            AppSettings.isAutoStartEnabled(app) &&
+            hasUsage &&
+            hasOverlay &&
+            hasAccessibility
+        ) {
+            startMonitoring(app)
+        }
     }
 
     companion object {

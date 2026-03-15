@@ -5,6 +5,7 @@ import android.content.Context
 object AppSettings {
     const val PREFS_NAME = "scrollguard_ui"
     const val KEY_DOOM_SCROLL_ENABLED = "doom_scroll_enabled"
+    const val KEY_DARK_MODE_ENABLED = "dark_mode_enabled"
 
     fun isDoomScrollEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -15,6 +16,18 @@ object AppSettings {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_DOOM_SCROLL_ENABLED, enabled)
+            .apply()
+    }
+
+    fun isDarkModeEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_DARK_MODE_ENABLED, false)
+    }
+
+    fun setDarkModeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_DARK_MODE_ENABLED, enabled)
             .apply()
     }
 }

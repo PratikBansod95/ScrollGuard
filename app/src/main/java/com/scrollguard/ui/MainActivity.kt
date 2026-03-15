@@ -114,8 +114,9 @@ class MainActivity : ComponentActivity() {
 
         val app = application as ScrollGuardApp
         setContent {
-            ScrollGuardTheme {
-                val viewModel: MainViewModel = viewModel(factory = MainViewModel.factory(app))
+            val viewModel: MainViewModel = viewModel(factory = MainViewModel.factory(app))
+            val uiState by viewModel.uiState.collectAsState()
+            ScrollGuardTheme(darkTheme = uiState.darkModeEnabled) {
                 ScrollGuardRoot(viewModel = viewModel)
             }
         }
@@ -131,6 +132,7 @@ data class MainUiState(
     val hasOverlayAccess: Boolean = false,
     val hasAccessibilityAccess: Boolean = false,
     val doomScrollEnabled: Boolean = true,
+    val darkModeEnabled: Boolean = false,
     val defaultSessionSeconds: Int = 60,
     val defaultCooldownSeconds: Int = 300,
 )
@@ -146,6 +148,7 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
     init {
         _uiState.value = _uiState.value.copy(
             doomScrollEnabled = AppSettings.isDoomScrollEnabled(app),
+            darkModeEnabled = AppSettings.isDarkModeEnabled(app),
             defaultSessionSeconds = prefs.getInt(KEY_DEFAULT_SESSION_SECONDS, 60),
             defaultCooldownSeconds = prefs.getInt(KEY_DEFAULT_COOLDOWN_SECONDS, 300),
         )
@@ -202,6 +205,11 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
     fun setDoomScrollEnabled(enabled: Boolean) {
         AppSettings.setDoomScrollEnabled(app, enabled)
         _uiState.value = _uiState.value.copy(doomScrollEnabled = enabled)
+    }
+
+    fun setDarkModeEnabled(enabled: Boolean) {
+        AppSettings.setDarkModeEnabled(app, enabled)
+        _uiState.value = _uiState.value.copy(darkModeEnabled = enabled)
     }
 
     fun startMonitoring(context: Context) {
@@ -327,6 +335,7 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     hasOverlay = uiState.hasOverlayAccess,
                     hasAccessibility = uiState.hasAccessibilityAccess,
                     doomScrollEnabled = uiState.doomScrollEnabled,
+                    darkModeEnabled = uiState.darkModeEnabled,
                     monitoredCount = uiState.limits.size,
                     stats = uiState.stats,
                     monitoringActive = uiState.monitoringActive,
@@ -335,6 +344,7 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     onOpenAccessibility = { context.startActivity(PermissionUtils.accessibilityIntent()) },
                     onStartMonitoring = { viewModel.startMonitoring(context) },
                     onToggleDoomScroll = viewModel::setDoomScrollEnabled,
+                    onToggleDarkMode = viewModel::setDarkModeEnabled,
                 )
             }
             composable("limits") {
@@ -362,6 +372,7 @@ private fun HomeScreen(
     hasOverlay: Boolean,
     hasAccessibility: Boolean,
     doomScrollEnabled: Boolean,
+    darkModeEnabled: Boolean,
     monitoredCount: Int,
     stats: DashboardStats,
     monitoringActive: Boolean,
@@ -370,6 +381,7 @@ private fun HomeScreen(
     onOpenAccessibility: () -> Unit,
     onStartMonitoring: () -> Unit,
     onToggleDoomScroll: (Boolean) -> Unit,
+    onToggleDarkMode: (Boolean) -> Unit,
 ) {
     val completedSteps = listOf(hasUsageAccess, hasOverlay, hasAccessibility).count { it }
     val allReady = completedSteps == 3
@@ -407,6 +419,12 @@ private fun HomeScreen(
             DoomScrollToggleCard(
                 enabled = doomScrollEnabled,
                 onToggle = onToggleDoomScroll,
+            )
+        }
+        item {
+            DarkModeToggleCard(
+                enabled = darkModeEnabled,
+                onToggle = onToggleDarkMode,
             )
         }
         item {
@@ -642,9 +660,35 @@ private fun DoomScrollToggleCard(
         }
     }
 }
+
+@Composable
+private fun DarkModeToggleCard(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Dark mode", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Switch the interface between light and dark themes.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(if (enabled) "Enabled" else "Disabled", style = MaterialTheme.typography.labelLarge)
+                Switch(checked = enabled, onCheckedChange = onToggle)
+            }
+        }
+    }
+}
+
 @Composable
 private fun HowItWorksCard() {
-    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF2DA))) {
+    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("How a protected session works", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             TimelineRow("Pick the apps you tend to lose time in.")

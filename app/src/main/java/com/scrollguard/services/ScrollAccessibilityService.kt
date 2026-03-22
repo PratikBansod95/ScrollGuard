@@ -37,6 +37,10 @@ class ScrollAccessibilityService : AccessibilityService(), SharedPreferences.OnS
     }
 
     private fun handleWindowChange(event: AccessibilityEvent) {
+        if (!AppSettings.shouldBlockNow(this)) {
+            sessionManager.endSession()
+            return
+        }
         val packageName = event.packageName?.toString() ?: return
         if (packageName == activePackageName) return
 
@@ -51,6 +55,7 @@ class ScrollAccessibilityService : AccessibilityService(), SharedPreferences.OnS
 
     private fun handleScrollEvent(event: AccessibilityEvent) {
         if (!doomScrollEnabled) return
+        if (!AppSettings.shouldBlockNow(this)) return
 
         val packageName = event.packageName?.toString() ?: return
         if (!trackedAppsRepository.isTrackedApp(packageName)) return

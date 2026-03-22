@@ -3,6 +3,8 @@ package com.scrollguard.ui
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.app.TimePickerDialog
+import android.text.format.DateFormat
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +15,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -100,12 +104,16 @@ import com.scrollguard.ui.theme.Reef
 import com.scrollguard.ui.theme.ScrollGuardTheme
 import com.scrollguard.utils.AppSettings
 import com.scrollguard.utils.AppUtils
+import com.scrollguard.utils.BlockSchedule
 import com.scrollguard.utils.InstalledApp
 import com.scrollguard.utils.PermissionUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.DayOfWeek
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -135,6 +143,11 @@ data class MainUiState(
     val darkModeEnabled: Boolean = false,
     val defaultSessionSeconds: Int = 60,
     val defaultCooldownSeconds: Int = 300,
+    val scheduleEnabled: Boolean = false,
+    val scheduleStartMinutes: Int = AppSettings.DEFAULT_SCHEDULE_START_MINUTES,
+    val scheduleEndMinutes: Int = AppSettings.DEFAULT_SCHEDULE_END_MINUTES,
+    val scheduleDays: Set<DayOfWeek> = AppSettings.DEFAULT_SCHEDULE_DAYS,
+    val scheduleActiveNow: Boolean = true,
 )
 
 class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
@@ -147,11 +160,17 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
+        val schedule = AppSettings.getBlockSchedule(app)
         _uiState.value = _uiState.value.copy(
             doomScrollEnabled = AppSettings.isDoomScrollEnabled(app),
             darkModeEnabled = AppSettings.isDarkModeEnabled(app),
             defaultSessionSeconds = prefs.getInt(KEY_DEFAULT_SESSION_SECONDS, 60),
             defaultCooldownSeconds = prefs.getInt(KEY_DEFAULT_COOLDOWN_SECONDS, 300),
+            scheduleEnabled = schedule.enabled,
+            scheduleStartMinutes = schedule.startMinutes,
+            scheduleEndMinutes = schedule.endMinutes,
+            scheduleDays = schedule.activeDays,
+            scheduleActiveNow = AppSettings.shouldBlockNow(app),
         )
         viewModelScope.launch {
             repository.observeLimits().collect { limits ->
@@ -213,6 +232,49 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
         _uiState.value = _uiState.value.copy(darkModeEnabled = enabled)
     }
 
+    fun setScheduleEnabled(enabled: Boolean) {
+        updateSchedule(currentSchedule().copy(enabled = enabled))
+    }
+
+    fun updateScheduleStart(minutes: Int) {
+        updateSchedule(currentSchedule().copy(startMinutes = minutes, enabled = true))
+    }
+
+    fun updateScheduleEnd(minutes: Int) {
+        updateSchedule(currentSchedule().copy(endMinutes = minutes, enabled = true))
+    }
+
+    fun toggleScheduleDay(day: DayOfWeek) {
+        val current = currentSchedule()
+        val nextDays = if (current.activeDays.contains(day)) {
+            current.activeDays - day
+        } else {
+            current.activeDays + day
+        }
+        updateSchedule(current.copy(activeDays = nextDays, enabled = true))
+    }
+
+    private fun updateSchedule(schedule: BlockSchedule) {
+        AppSettings.setBlockSchedule(app, schedule)
+        _uiState.value = _uiState.value.copy(
+            scheduleEnabled = schedule.enabled,
+            scheduleStartMinutes = schedule.startMinutes,
+            scheduleEndMinutes = schedule.endMinutes,
+            scheduleDays = schedule.activeDays,
+            scheduleActiveNow = AppSettings.shouldBlockNow(app),
+        )
+    }
+
+    private fun currentSchedule(): BlockSchedule {
+        val state = _uiState.value
+        return BlockSchedule(
+            enabled = state.scheduleEnabled,
+            startMinutes = state.scheduleStartMinutes,
+            endMinutes = state.scheduleEndMinutes,
+            activeDays = state.scheduleDays,
+        )
+    }
+
     fun startMonitoring(context: Context) {
         if (isStartingMonitoring || PermissionUtils.isMonitoringActive(app)) {
             return
@@ -235,6 +297,7 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
             hasUsageAccess = hasUsage,
             hasOverlayAccess = hasOverlay,
             hasAccessibilityAccess = hasAccessibility,
+            scheduleActiveNow = AppSettings.shouldBlockNow(app),
         )
         if (!monitoringActive &&
             !isStartingMonitoring &&
@@ -359,12 +422,21 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     monitoredCount = uiState.limits.size,
                     stats = uiState.stats,
                     monitoringActive = uiState.monitoringActive,
+                    scheduleEnabled = uiState.scheduleEnabled,
+                    scheduleStartMinutes = uiState.scheduleStartMinutes,
+                    scheduleEndMinutes = uiState.scheduleEndMinutes,
+                    scheduleDays = uiState.scheduleDays,
+                    scheduleActiveNow = uiState.scheduleActiveNow,
                     onOpenUsageAccess = { context.startActivity(PermissionUtils.usageAccessIntent()) },
                     onOpenOverlayAccess = { context.startActivity(PermissionUtils.overlayIntent(context)) },
                     onOpenAccessibility = { context.startActivity(PermissionUtils.accessibilityIntent()) },
                     onStartMonitoring = { viewModel.startMonitoring(context) },
                     onToggleDoomScroll = viewModel::setDoomScrollEnabled,
                     onToggleDarkMode = viewModel::setDarkModeEnabled,
+                    onToggleScheduleEnabled = viewModel::setScheduleEnabled,
+                    onScheduleStartChange = viewModel::updateScheduleStart,
+                    onScheduleEndChange = viewModel::updateScheduleEnd,
+                    onToggleScheduleDay = viewModel::toggleScheduleDay,
                 )
             }
             composable("limits") {
@@ -396,12 +468,21 @@ private fun HomeScreen(
     monitoredCount: Int,
     stats: DashboardStats,
     monitoringActive: Boolean,
+    scheduleEnabled: Boolean,
+    scheduleStartMinutes: Int,
+    scheduleEndMinutes: Int,
+    scheduleDays: Set<DayOfWeek>,
+    scheduleActiveNow: Boolean,
     onOpenUsageAccess: () -> Unit,
     onOpenOverlayAccess: () -> Unit,
     onOpenAccessibility: () -> Unit,
     onStartMonitoring: () -> Unit,
     onToggleDoomScroll: (Boolean) -> Unit,
     onToggleDarkMode: (Boolean) -> Unit,
+    onToggleScheduleEnabled: (Boolean) -> Unit,
+    onScheduleStartChange: (Int) -> Unit,
+    onScheduleEndChange: (Int) -> Unit,
+    onToggleScheduleDay: (DayOfWeek) -> Unit,
 ) {
     val completedSteps = listOf(hasUsageAccess, hasOverlay, hasAccessibility).count { it }
     val allReady = completedSteps == 3
@@ -421,6 +502,19 @@ private fun HomeScreen(
         }
         item {
             MonitoringStatusCard(monitoringActive = monitoringActive, monitoredCount = monitoredCount)
+        }
+        item {
+            BlockScheduleCard(
+                scheduleEnabled = scheduleEnabled,
+                scheduleStartMinutes = scheduleStartMinutes,
+                scheduleEndMinutes = scheduleEndMinutes,
+                scheduleDays = scheduleDays,
+                scheduleActiveNow = scheduleActiveNow,
+                onToggleEnabled = onToggleScheduleEnabled,
+                onStartMinutesChange = onScheduleStartChange,
+                onEndMinutesChange = onScheduleEndChange,
+                onToggleDay = onToggleScheduleDay,
+            )
         }
         item {
             QuickStatsStrip(stats = stats, monitoredCount = monitoredCount)
@@ -568,6 +662,130 @@ private fun MonitoringStatusCard(monitoringActive: Boolean, monitoredCount: Int)
         }
     }
 }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BlockScheduleCard(
+    scheduleEnabled: Boolean,
+    scheduleStartMinutes: Int,
+    scheduleEndMinutes: Int,
+    scheduleDays: Set<DayOfWeek>,
+    scheduleActiveNow: Boolean,
+    onToggleEnabled: (Boolean) -> Unit,
+    onStartMinutesChange: (Int) -> Unit,
+    onEndMinutesChange: (Int) -> Unit,
+    onToggleDay: (DayOfWeek) -> Unit,
+) {
+    val statusTitle = when {
+        !scheduleEnabled -> "Blocking runs all day"
+        scheduleActiveNow -> "Blocking is active right now"
+        else -> "Blocking is paused right now"
+    }
+    val statusBody = when {
+        !scheduleEnabled -> "Turn on scheduling to limit apps only during work hours."
+        scheduleActiveNow -> "Outside these hours, limits and warnings are paused."
+        else -> "Limits and warnings resume at your next scheduled window."
+    }
+    val dayOptions = listOf(
+        DayOfWeek.MONDAY to "Mon",
+        DayOfWeek.TUESDAY to "Tue",
+        DayOfWeek.WEDNESDAY to "Wed",
+        DayOfWeek.THURSDAY to "Thu",
+        DayOfWeek.FRIDAY to "Fri",
+        DayOfWeek.SATURDAY to "Sat",
+        DayOfWeek.SUNDAY to "Sun",
+    )
+
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Protection schedule", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Limit apps only during selected days and times.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(if (scheduleEnabled) "Scheduled" else "Always on", style = MaterialTheme.typography.labelLarge)
+                Switch(checked = scheduleEnabled, onCheckedChange = onToggleEnabled)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                TimePickerButton(
+                    label = "Start",
+                    minutes = scheduleStartMinutes,
+                    onMinutesChange = onStartMinutesChange,
+                    modifier = Modifier.weight(1f),
+                )
+                TimePickerButton(
+                    label = "End",
+                    minutes = scheduleEndMinutes,
+                    onMinutesChange = onEndMinutesChange,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                dayOptions.forEach { (day, label) ->
+                    FilterChip(
+                        selected = scheduleDays.contains(day),
+                        onClick = { onToggleDay(day) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+            StatusHint(statusTitle, statusBody)
+        }
+    }
+}
+
+@Composable
+private fun TimePickerButton(
+    label: String,
+    minutes: Int,
+    onMinutesChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val safeMinutes = minutes.coerceIn(0, 24 * 60 - 1)
+    val hour = safeMinutes / 60
+    val minute = safeMinutes % 60
+    val timeLabel = formatTimeLabel(context, safeMinutes)
+
+    OutlinedButton(
+        onClick = {
+            TimePickerDialog(
+                context,
+                { _, selectedHour, selectedMinute ->
+                    onMinutesChange(selectedHour * 60 + selectedMinute)
+                },
+                hour,
+                minute,
+                DateFormat.is24HourFormat(context),
+            ).show()
+        },
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(timeLabel, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+private fun formatTimeLabel(context: Context, minutes: Int): String {
+    val safeMinutes = minutes.coerceIn(0, 24 * 60 - 1)
+    val time = LocalTime.of(safeMinutes / 60, safeMinutes % 60)
+    val pattern = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    return time.format(DateTimeFormatter.ofPattern(pattern))
+}
+
 
 @Composable
 private fun HeroInfoPill(label: String, value: String) {

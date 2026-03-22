@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.content.ContextCompat
 import com.scrollguard.services.OverlayCommand
 import com.scrollguard.services.OverlayService
+import com.scrollguard.utils.AppSettings
 
 class InterventionManager(
     private val context: Context,
@@ -19,6 +20,9 @@ class InterventionManager(
         scrollRate: Double,
         scrollCount: Int,
     ) {
+        if (!AppSettings.shouldBlockNow(context)) {
+            return
+        }
         val now = System.currentTimeMillis()
         if (packageName == lastInterventionPackage && now - lastInterventionAt < minGapBetweenInterventionsMs) {
             return

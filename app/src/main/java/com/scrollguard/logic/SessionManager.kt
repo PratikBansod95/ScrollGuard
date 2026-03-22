@@ -6,6 +6,7 @@ import com.scrollguard.data.AppLimitEntity
 import com.scrollguard.data.AppRepository
 import com.scrollguard.services.OverlayCommand
 import com.scrollguard.services.OverlayService
+import com.scrollguard.utils.AppSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,7 @@ class SessionManager(
     private var lastWarningAt = 0L
     private var warningsThisSession = 0
     private var lastTrackedSeenAt = 0L
+    private var scheduleActiveLast = true
 
     private var doomScrollPackageName: String? = null
     private var doomScrollSessionStartMillis = 0L
@@ -52,12 +54,24 @@ class SessionManager(
     init {
         activePackageName = prefs.getString(KEY_ACTIVE_PACKAGE, null)
         sessionStartMillis = prefs.getLong(KEY_SESSION_START_MILLIS, 0L)
+        scheduleActiveLast = AppSettings.shouldBlockNow(context)
         ensureStatsForToday()
         _dashboardStats.value = loadStats()
     }
 
     suspend fun onForegroundAppChanged(packageName: String?) {
         val now = System.currentTimeMillis()
+        val scheduleActive = AppSettings.shouldBlockNow(context, now)
+        if (!scheduleActive) {
+            if (activePackageName != null || _activeSession.value != null) {
+                clearSession()
+            } else if (scheduleActiveLast) {
+                dispatchOverlay(OverlayCommand.HideAll)
+            }
+            scheduleActiveLast = false
+            return
+        }
+        scheduleActiveLast = true
         if (packageName.isNullOrBlank()) {
             handleBackground(now)
             return

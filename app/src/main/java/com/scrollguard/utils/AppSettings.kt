@@ -3,6 +3,9 @@ package com.scrollguard.utils
 import android.content.Context
 import java.time.DayOfWeek
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 
 object AppSettings {
@@ -14,6 +17,8 @@ object AppSettings {
     const val KEY_SCHEDULE_START_MINUTES = "schedule_start_minutes"
     const val KEY_SCHEDULE_END_MINUTES = "schedule_end_minutes"
     const val KEY_SCHEDULE_DAY_MASK = "schedule_day_mask"
+    const val KEY_QUIET_UNTIL_MILLIS = "quiet_until_millis"
+    const val KEY_ONBOARDING_DISMISSED = "onboarding_dismissed"
 
     fun isDoomScrollEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -76,11 +81,93 @@ object AppSettings {
     }
 
     fun shouldBlockNow(context: Context, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        if (isQuietModeActive(context, nowMillis)) {
+            return false
+        }
         val schedule = getBlockSchedule(context)
         if (!schedule.enabled) {
             return true
         }
         return isWithinSchedule(schedule, nowMillis)
+    }
+
+    fun setQuietMode(context: Context, untilMillis: Long) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_QUIET_UNTIL_MILLIS, untilMillis)
+            .apply()
+    }
+
+    fun clearQuietMode(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_QUIET_UNTIL_MILLIS, 0L)
+            .apply()
+    }
+
+    fun getQuietUntilMillis(context: Context): Long {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_QUIET_UNTIL_MILLIS, 0L)
+    }
+
+    fun isQuietModeActive(context: Context, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val until = getQuietUntilMillis(context)
+        return until > nowMillis
+    }
+
+    fun dismissOnboarding(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_ONBOARDING_DISMISSED, true)
+            .apply()
+    }
+
+    fun isOnboardingDismissed(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_ONBOARDING_DISMISSED, false)
+    }
+
+    fun nextScheduleWindow(
+        schedule: BlockSchedule,
+        nowMillis: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): ScheduleWindow? {
+        if (!schedule.enabled || schedule.activeDays.isEmpty()) {
+            return null
+        }
+        val now = Instant.ofEpochMilli(nowMillis).atZone(zoneId).toLocalDateTime()
+        val maxDays = 8
+        for (dayOffset in 0 until maxDays) {
+            val date = now.toLocalDate().plusDays(dayOffset.toLong())
+            val day = date.dayOfWeek
+            if (!schedule.activeDays.contains(day)) {
+                continue
+            }
+            val start = LocalDateTime.of(date, minutesToTime(schedule.startMinutes))
+            val end = LocalDateTime.of(date, minutesToTime(schedule.endMinutes))
+            if (schedule.startMinutes == schedule.endMinutes) {
+                val fullDayStart = start
+                val fullDayEnd = start.plusDays(1)
+                if (now.isBefore(fullDayEnd)) {
+                    return ScheduleWindow(fullDayStart, fullDayEnd)
+                }
+                continue
+            }
+            if (schedule.startMinutes < schedule.endMinutes) {
+                val windowStart = start
+                val windowEnd = end
+                if (now.isBefore(windowEnd)) {
+                    return ScheduleWindow(windowStart, windowEnd)
+                }
+            } else {
+                val windowStart = start
+                val windowEnd = end.plusDays(1)
+                if (now.isBefore(windowEnd)) {
+                    return ScheduleWindow(windowStart, windowEnd)
+                }
+            }
+        }
+        return null
     }
 
     private fun isWithinSchedule(schedule: BlockSchedule, nowMillis: Long): Boolean {
@@ -120,6 +207,11 @@ object AppSettings {
         return WEEK_DAYS.filterIndexed { index, _ -> (mask and (1 shl index)) != 0 }.toSet()
     }
 
+    private fun minutesToTime(minutes: Int): LocalTime {
+        val safeMinutes = minutes.coerceIn(0, MINUTES_PER_DAY - 1)
+        return LocalTime.of(safeMinutes / 60, safeMinutes % 60)
+    }
+
     private val WEEK_DAYS = listOf(
         DayOfWeek.MONDAY,
         DayOfWeek.TUESDAY,
@@ -148,4 +240,9 @@ data class BlockSchedule(
     val startMinutes: Int,
     val endMinutes: Int,
     val activeDays: Set<DayOfWeek>,
+)
+
+data class ScheduleWindow(
+    val start: LocalDateTime,
+    val end: LocalDateTime,
 )

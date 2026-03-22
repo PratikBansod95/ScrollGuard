@@ -60,6 +60,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
@@ -105,6 +106,7 @@ import com.scrollguard.ui.theme.ScrollGuardTheme
 import com.scrollguard.utils.AppSettings
 import com.scrollguard.utils.AppUtils
 import com.scrollguard.utils.BlockSchedule
+import com.scrollguard.utils.ScheduleWindow
 import com.scrollguard.utils.InstalledApp
 import com.scrollguard.utils.PermissionUtils
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -112,8 +114,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.time.ZoneId
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -148,6 +153,8 @@ data class MainUiState(
     val scheduleEndMinutes: Int = AppSettings.DEFAULT_SCHEDULE_END_MINUTES,
     val scheduleDays: Set<DayOfWeek> = AppSettings.DEFAULT_SCHEDULE_DAYS,
     val scheduleActiveNow: Boolean = true,
+    val quietUntilMillis: Long = 0L,
+    val onboardingDismissed: Boolean = false,
 )
 
 class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
@@ -171,6 +178,8 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
             scheduleEndMinutes = schedule.endMinutes,
             scheduleDays = schedule.activeDays,
             scheduleActiveNow = AppSettings.shouldBlockNow(app),
+            quietUntilMillis = AppSettings.getQuietUntilMillis(app),
+            onboardingDismissed = AppSettings.isOnboardingDismissed(app),
         )
         viewModelScope.launch {
             repository.observeLimits().collect { limits ->
@@ -254,6 +263,28 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
         updateSchedule(current.copy(activeDays = nextDays, enabled = true))
     }
 
+    fun startQuietMode(minutes: Int) {
+        val until = System.currentTimeMillis() + minutes.coerceAtLeast(1) * 60_000L
+        AppSettings.setQuietMode(app, until)
+        _uiState.value = _uiState.value.copy(
+            quietUntilMillis = until,
+            scheduleActiveNow = AppSettings.shouldBlockNow(app),
+        )
+    }
+
+    fun clearQuietMode() {
+        AppSettings.clearQuietMode(app)
+        _uiState.value = _uiState.value.copy(
+            quietUntilMillis = 0L,
+            scheduleActiveNow = AppSettings.shouldBlockNow(app),
+        )
+    }
+
+    fun dismissOnboarding() {
+        AppSettings.dismissOnboarding(app)
+        _uiState.value = _uiState.value.copy(onboardingDismissed = true)
+    }
+
     private fun updateSchedule(schedule: BlockSchedule) {
         AppSettings.setBlockSchedule(app, schedule)
         _uiState.value = _uiState.value.copy(
@@ -262,6 +293,8 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
             scheduleEndMinutes = schedule.endMinutes,
             scheduleDays = schedule.activeDays,
             scheduleActiveNow = AppSettings.shouldBlockNow(app),
+            quietUntilMillis = AppSettings.getQuietUntilMillis(app),
+            onboardingDismissed = AppSettings.isOnboardingDismissed(app),
         )
     }
 
@@ -298,6 +331,7 @@ class MainViewModel(private val app: ScrollGuardApp) : ViewModel() {
             hasOverlayAccess = hasOverlay,
             hasAccessibilityAccess = hasAccessibility,
             scheduleActiveNow = AppSettings.shouldBlockNow(app),
+            quietUntilMillis = AppSettings.getQuietUntilMillis(app),
         )
         if (!monitoringActive &&
             !isStartingMonitoring &&
@@ -420,6 +454,7 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     doomScrollEnabled = uiState.doomScrollEnabled,
                     darkModeEnabled = uiState.darkModeEnabled,
                     monitoredCount = uiState.limits.size,
+                    monitoredApps = uiState.limits,
                     stats = uiState.stats,
                     monitoringActive = uiState.monitoringActive,
                     scheduleEnabled = uiState.scheduleEnabled,
@@ -427,6 +462,8 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     scheduleEndMinutes = uiState.scheduleEndMinutes,
                     scheduleDays = uiState.scheduleDays,
                     scheduleActiveNow = uiState.scheduleActiveNow,
+                    quietUntilMillis = uiState.quietUntilMillis,
+                    onboardingDismissed = uiState.onboardingDismissed,
                     onOpenUsageAccess = { context.startActivity(PermissionUtils.usageAccessIntent()) },
                     onOpenOverlayAccess = { context.startActivity(PermissionUtils.overlayIntent(context)) },
                     onOpenAccessibility = { context.startActivity(PermissionUtils.accessibilityIntent()) },
@@ -437,6 +474,10 @@ private fun ScrollGuardRoot(viewModel: MainViewModel) {
                     onScheduleStartChange = viewModel::updateScheduleStart,
                     onScheduleEndChange = viewModel::updateScheduleEnd,
                     onToggleScheduleDay = viewModel::toggleScheduleDay,
+                    onStartQuietMode = viewModel::startQuietMode,
+                    onClearQuietMode = viewModel::clearQuietMode,
+                    onDismissOnboarding = viewModel::dismissOnboarding,
+                    onOpenLimits = { navController.navigate("limits") },
                 )
             }
             composable("limits") {
@@ -466,6 +507,7 @@ private fun HomeScreen(
     doomScrollEnabled: Boolean,
     darkModeEnabled: Boolean,
     monitoredCount: Int,
+    monitoredApps: List<AppLimitEntity>,
     stats: DashboardStats,
     monitoringActive: Boolean,
     scheduleEnabled: Boolean,
@@ -473,6 +515,8 @@ private fun HomeScreen(
     scheduleEndMinutes: Int,
     scheduleDays: Set<DayOfWeek>,
     scheduleActiveNow: Boolean,
+    quietUntilMillis: Long,
+    onboardingDismissed: Boolean,
     onOpenUsageAccess: () -> Unit,
     onOpenOverlayAccess: () -> Unit,
     onOpenAccessibility: () -> Unit,
@@ -483,6 +527,10 @@ private fun HomeScreen(
     onScheduleStartChange: (Int) -> Unit,
     onScheduleEndChange: (Int) -> Unit,
     onToggleScheduleDay: (DayOfWeek) -> Unit,
+    onStartQuietMode: (Int) -> Unit,
+    onClearQuietMode: () -> Unit,
+    onDismissOnboarding: () -> Unit,
+    onOpenLimits: () -> Unit,
 ) {
     val completedSteps = listOf(hasUsageAccess, hasOverlay, hasAccessibility).count { it }
     val allReady = completedSteps == 3
@@ -492,6 +540,18 @@ private fun HomeScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (!onboardingDismissed) {
+            item {
+                OnboardingCard(onDismiss = onDismissOnboarding)
+            }
+        }
+        item {
+            StatusBannerCard(
+                scheduleEnabled = scheduleEnabled,
+                scheduleActiveNow = scheduleActiveNow,
+                quietUntilMillis = quietUntilMillis,
+            )
+        }
         item {
             FocusHeroCard(
                 monitoredCount = monitoredCount,
@@ -501,7 +561,16 @@ private fun HomeScreen(
             )
         }
         item {
-            MonitoringStatusCard(monitoringActive = monitoringActive, monitoredCount = monitoredCount)
+            SetupStatusCard(
+                monitoringActive = monitoringActive,
+                monitoredCount = monitoredCount,
+                hasUsageAccess = hasUsageAccess,
+                hasOverlay = hasOverlay,
+                hasAccessibility = hasAccessibility,
+                onOpenUsageAccess = onOpenUsageAccess,
+                onOpenOverlayAccess = onOpenOverlayAccess,
+                onOpenAccessibility = onOpenAccessibility,
+            )
         }
         item {
             BlockScheduleCard(
@@ -517,17 +586,20 @@ private fun HomeScreen(
             )
         }
         item {
-            QuickStatsStrip(stats = stats, monitoredCount = monitoredCount)
+            QuietModeCard(
+                quietUntilMillis = quietUntilMillis,
+                onStartQuietMode = onStartQuietMode,
+                onClearQuietMode = onClearQuietMode,
+            )
         }
         item {
-            SetupChecklistCard(
-                hasUsageAccess = hasUsageAccess,
-                hasOverlay = hasOverlay,
-                hasAccessibility = hasAccessibility,
-                onOpenUsageAccess = onOpenUsageAccess,
-                onOpenOverlayAccess = onOpenOverlayAccess,
-                onOpenAccessibility = onOpenAccessibility,
+            ProtectedAppsPreviewCard(
+                monitoredApps = monitoredApps,
+                onOpenLimits = onOpenLimits,
             )
+        }
+        item {
+            QuickStatsStrip(stats = stats, monitoredCount = monitoredCount)
         }
         item {
             DoomScrollToggleCard(
@@ -676,6 +748,7 @@ private fun BlockScheduleCard(
     onEndMinutesChange: (Int) -> Unit,
     onToggleDay: (DayOfWeek) -> Unit,
 ) {
+    val context = LocalContext.current
     val statusTitle = when {
         !scheduleEnabled -> "Blocking runs all day"
         scheduleActiveNow -> "Blocking is active right now"
@@ -704,6 +777,27 @@ private fun BlockScheduleCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (scheduleEnabled) {
+                val window = AppSettings.nextScheduleWindow(
+                    BlockSchedule(
+                        enabled = scheduleEnabled,
+                        startMinutes = scheduleStartMinutes,
+                        endMinutes = scheduleEndMinutes,
+                        activeDays = scheduleDays,
+                    ),
+                )
+                if (window != null) {
+                    Text(
+                        if (scheduleActiveNow) {
+                            "Active until ${formatDateTimeLabel(context, window.end.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())}"
+                        } else {
+                            "Next window ${formatScheduleWindowLabel(context, window)}"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -785,6 +879,204 @@ private fun formatTimeLabel(context: Context, minutes: Int): String {
     val pattern = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
     return time.format(DateTimeFormatter.ofPattern(pattern))
 }
+
+
+@Composable
+private fun OnboardingCard(onDismiss: () -> Unit) {
+    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Welcome to SnapOut", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("A quick setup gives you calm limits without blocking everything.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TimelineRow("Pick the apps you lose time in.")
+            TimelineRow("Choose a session and cooldown.")
+            TimelineRow("Start protection and let the overlays guide you.")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) {
+                    Text("Got it")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusBannerCard(
+    scheduleEnabled: Boolean,
+    scheduleActiveNow: Boolean,
+    quietUntilMillis: Long,
+) {
+    val context = LocalContext.current
+    val nowMillis = System.currentTimeMillis()
+    val quietActive = quietUntilMillis > nowMillis
+    val schedule = AppSettings.getBlockSchedule(context)
+    val nextWindow = AppSettings.nextScheduleWindow(schedule, nowMillis)
+    val bannerTitle = when {
+        quietActive -> "Quiet mode is on"
+        !scheduleEnabled -> "Protection is always on"
+        scheduleActiveNow -> "Protection is active"
+        else -> "Protection is paused"
+    }
+    val bannerBody = when {
+        quietActive -> "Limits and warnings resume at ${formatDateTimeLabel(context, quietUntilMillis)}."
+        !scheduleEnabled -> "Set a schedule to limit apps only during work hours."
+        scheduleActiveNow -> nextWindow?.let { "Scheduled until ${formatTimeLabel(context, minutesFromLocalTime(it.end.toLocalTime()))}." }
+            ?: "Your schedule is active right now."
+        else -> nextWindow?.let { "Next window: ${formatScheduleWindowLabel(context, it)}" } ?: "No upcoming window found."
+    }
+
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(if (scheduleActiveNow && !quietActive) Moss.copy(alpha = 0.16f) else Amber.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (scheduleActiveNow && !quietActive) Icons.Rounded.CheckCircle else Icons.Rounded.Timer,
+                    contentDescription = null,
+                    tint = if (scheduleActiveNow && !quietActive) Moss else Coral,
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(bannerTitle, style = MaterialTheme.typography.titleMedium)
+                Text(bannerBody, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupStatusCard(
+    monitoringActive: Boolean,
+    monitoredCount: Int,
+    hasUsageAccess: Boolean,
+    hasOverlay: Boolean,
+    hasAccessibility: Boolean,
+    onOpenUsageAccess: () -> Unit,
+    onOpenOverlayAccess: () -> Unit,
+    onOpenAccessibility: () -> Unit,
+) {
+    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .background(if (monitoringActive) Moss.copy(alpha = 0.16f) else Amber.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (monitoringActive) Icons.Rounded.CheckCircle else Icons.Rounded.Warning,
+                        contentDescription = null,
+                        tint = if (monitoringActive) Moss else Coral,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(if (monitoringActive) "Monitoring is active" else "Finish setup to start monitoring", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (monitoringActive) {
+                            if (monitoredCount > 0) "$monitoredCount apps are protected right now." else "Pick some apps in Limits to activate protection."
+                        } else {
+                            "Grant permissions and tap Start protection when ready."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                StatusPill(active = monitoringActive)
+            }
+            Text("Setup checklist", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            PermissionStepRow("Usage access", "Detect which app is currently on screen.", hasUsageAccess, onOpenUsageAccess)
+            PermissionStepRow("Overlay permission", "Show the timer bar, warning modal, and cooldown wall.", hasOverlay, onOpenOverlayAccess)
+            PermissionStepRow("Accessibility service", "Watch heavy scrolling patterns inside feeds.", hasAccessibility, onOpenAccessibility)
+        }
+    }
+}
+
+@Composable
+private fun QuietModeCard(
+    quietUntilMillis: Long,
+    onStartQuietMode: (Int) -> Unit,
+    onClearQuietMode: () -> Unit,
+) {
+    val nowMillis = System.currentTimeMillis()
+    val quietActive = quietUntilMillis > nowMillis
+    val remaining = if (quietActive) ((quietUntilMillis - nowMillis) / 60_000L).coerceAtLeast(1) else 0L
+
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Quiet mode", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (quietActive) "Quiet mode is on for about ${remaining}m." else "Pause all blockers for a short break.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (quietActive) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = onClearQuietMode, shape = RoundedCornerShape(16.dp)) {
+                        Text("End quiet mode")
+                    }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = false, onClick = { onStartQuietMode(15) }, label = { Text("15m") })
+                    FilterChip(selected = false, onClick = { onStartQuietMode(30) }, label = { Text("30m") })
+                    FilterChip(selected = false, onClick = { onStartQuietMode(60) }, label = { Text("1h") })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProtectedAppsPreviewCard(
+    monitoredApps: List<AppLimitEntity>,
+    onOpenLimits: () -> Unit,
+) {
+    val previewApps = monitoredApps.take(5)
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Protected apps", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            if (previewApps.isEmpty()) {
+                Text("No apps are protected yet. Add some to start." , color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    previewApps.forEach { app ->
+                        Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                            Text(app.appName, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+            OutlinedButton(onClick = onOpenLimits, shape = RoundedCornerShape(16.dp)) {
+                Text("Manage apps")
+            }
+        }
+    }
+}
+
+private fun formatScheduleWindowLabel(context: Context, window: ScheduleWindow): String {
+    val startLabel = formatDateTimeLabel(context, window.start.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+    val endLabel = formatDateTimeLabel(context, window.end.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+    return "$startLabel - $endLabel"
+}
+
+private fun formatDateTimeLabel(context: Context, epochMillis: Long): String {
+    val dateTime = Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDateTime()
+    val datePattern = "EEE"
+    val timePattern = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    val formatter = DateTimeFormatter.ofPattern("$datePattern $timePattern")
+    return dateTime.format(formatter)
+}
+
+private fun minutesFromLocalTime(time: LocalTime): Int = time.hour * 60 + time.minute
 
 
 @Composable
@@ -970,6 +1262,7 @@ fun AppSelectionScreen(
     var selectedDefaultSession by remember(defaultSessionSeconds) { mutableStateOf(defaultSessionSeconds) }
     var selectedDefaultCooldown by remember(defaultCooldownSeconds) { mutableStateOf(defaultCooldownSeconds) }
     val suggestedCount = installedApps.count { it.isSuggested }
+    val nowMillis = System.currentTimeMillis()
 
     val filteredApps = installedApps
         .filter { app ->
@@ -1073,6 +1366,9 @@ fun AppSelectionScreen(
                 val sessionError = sessionValidationError(sessionValue)
                 val cooldownError = cooldownValidationError(cooldownValue)
                 val canSave = sessionError == null && cooldownError == null
+                val cooldownRemainingSeconds = existing?.cooldownEndMillis?.let { endMillis ->
+                    ((endMillis - nowMillis) / 1000L).toInt().coerceAtLeast(0)
+                } ?: 0
 
                 Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1130,10 +1426,28 @@ fun AppSelectionScreen(
                                     },
                                 )
                             }
+                            Slider(
+                                value = (sessionValue ?: defaultSessionSeconds).toFloat(),
+                                onValueChange = { timeInputs[app.packageName] = it.toInt().toString() },
+                                valueRange = 15f..900f,
+                                steps = 17,
+                            )
+                            Slider(
+                                value = (cooldownValue ?: defaultCooldownSeconds).toFloat(),
+                                onValueChange = { cooldownInputs[app.packageName] = it.toInt().toString() },
+                                valueRange = 60f..3600f,
+                                steps = 17,
+                            )
                             StatusHint(
                                 "Current setup",
                                 "${formatDuration(sessionValue ?: defaultSessionSeconds)} inside the app, then ${formatDuration(cooldownValue ?: defaultCooldownSeconds)} away from it.",
                             )
+                            if (cooldownRemainingSeconds > 0) {
+                                StatusHint(
+                                    "Cooldown active",
+                                    "${formatDuration(cooldownRemainingSeconds)} remaining until this app unlocks.",
+                                )
+                            }
                             PresetSection(
                                 title = "Quick session presets",
                                 values = listOf(45, 60, 120),
@@ -1235,6 +1549,7 @@ private fun AppIcon(app: InstalledApp) {
 
 @Composable
 fun DashboardScreen(stats: DashboardStats, monitoredCount: Int) {
+    val hasStats = stats.blockedSessionsToday > 0 || stats.doomScrollDetections > 0 || stats.topBlockedApp != "None"
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -1259,6 +1574,14 @@ fun DashboardScreen(stats: DashboardStats, monitoredCount: Int) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 DashboardHighlightCard("Blocked sessions", stats.blockedSessionsToday.toString(), Icons.Rounded.AccessTime, Amber, Modifier.weight(1f))
                 DashboardHighlightCard("Warnings", stats.doomScrollDetections.toString(), Icons.Rounded.Warning, Coral, Modifier.weight(1f))
+            }
+        }
+        if (!hasStats) {
+            item {
+                EmptyStateCard(
+                    title = "No activity yet",
+                    body = "Once protection runs, you will see warnings and blocks summarized here.",
+                )
             }
         }
         item {
